@@ -13,13 +13,15 @@ onde vem o dado, quais campos importam, e como calcular um score de risco
 comparativo — a logica de busca, filtro, score e historico e **compartilhada**
 entre classes (`scripts/`), nunca duplicada por classe de ativo.
 
-Classes disponiveis hoje:
+Classes disponiveis hoje (as tres completas e testadas contra a fonte real):
 
-| Classe | Config | Status |
-|---|---|---|
-| DeFi (yield farming, lending, LPs) | `config/defi.json` | **Completo** — fonte DefiLlama, sem API key |
-| Acoes / ETFs | `config/stocks.json` | Template — endpoint validado, adapter pendente |
-| Renda fixa / Tesouro Direto (BR) | `config/fixed-income.json` | Template — endpoint validado, adapter pendente |
+| Classe | Config | Fonte | Observacao |
+|---|---|---|---|
+| DeFi (yield farming, lending, LPs) | `config/defi.json` | DefiLlama `/pools`, sem key | Universo completo (todas as pools ativas) |
+| Renda fixa — Tesouro Direto (BR) | `config/fixed-income.json` | CSV oficial do Tesouro Transparente, sem key | Universo completo (todos os titulos, foto do dia mais recente) |
+| Acoes B3 (BR) | `config/stocks.json` | Yahoo Finance chart API, sem key | Por watchlist (nao existe endpoint gratuito que liste "todas" as acoes com metricas prontas) — edite `watchlist.tickers` no config |
+
+Acoes de outros mercados (ex: EUA via Alpha Vantage) nao foram implementadas — o foco atual e' pt-BR / B3.
 
 Rodar uma classe completa:
 
@@ -71,8 +73,11 @@ skill nao faz isso e pare — nao tente contornar via outro caminho.
 O motor de score (`scripts/score.py`, funcao `compute_scores`) e generico:
 le a lista `components` de um bloco de config (`risk_score` ou
 `opportunity_score`), aplica um `transform` conhecido em cada campo
-(`log10_minmax`, `minmax_capped`, `categorical_rules`,
-`relative_deviation_inverse`), combina os resultados numa media ponderada
+(`log10_minmax`, `minmax_capped`, `abs_minmax_capped`, `categorical_rules`,
+`relative_deviation_inverse`), opcionalmente inverte com `"invert": true`
+quando o campo cru vai na direcao oposta a "maior = mais seguro" (ex:
+prazo mais longo = mais risco em renda fixa, volatilidade mais alta = mais
+risco em acoes), combina os resultados numa media ponderada
 0-100, e redistribui o peso automaticamente quando um componente nao pode
 ser calculado por falta de dado. Se o bloco definir
 `missing_field_penalty_points`, tambem desconta esses pontos do score

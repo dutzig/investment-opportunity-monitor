@@ -1,38 +1,59 @@
 {
   "asset_class": "fixed-income",
-  "display_name": "Renda Fixa / Tesouro Direto (Brasil)",
-  "status": "TEMPLATE_NAO_IMPLEMENTADO",
-  "status_notes": "Endpoint oficial validado (HTTP 200, CSV publico, sem key). Falta escrever o adapter fetch_fixed_income() em scripts/fetch.py que faca o parse do CSV (separador ';', decimal ',', encoding latin-1) e normalize os registros. Ver docs/adding-asset-class.md. NAO usar em producao ate remover este status.",
+  "display_name": "Renda Fixa — Tesouro Direto (Brasil)",
   "source": {
     "type": "tesouro_transparente_csv",
     "endpoint": "https://www.tesourotransparente.gov.br/ckan/dataset/df56aa42-484a-4a59-8184-7676580c81e3/resource/796d2059-14e9-44e3-80c9-2d9e30b405c1/download/precotaxatesourodireto.csv",
     "requires_api_key": false,
-    "notes": "Dataset oficial 'Taxas dos Titulos Ofertados pelo Tesouro Direto', publicado pelo Tesouro Transparente (governo federal). Validado manualmente em 2026-08-29 (HTTP 200). Formato: CSV ';'-separado, atualizado diariamente apos fechamento do mercado."
+    "notes": "Dataset oficial 'Taxas dos Titulos Ofertados pelo Tesouro Direto', publicado pelo Tesouro Transparente (governo federal). Validado manualmente em 2026-08-29 (HTTP 200). E' o historico completo desde o inicio do Tesouro Direto (~175 mil linhas, ~14MB, 5000+ datas); o adapter filtra so a 'Data Base' mais recente do arquivo -- ver scripts/fetch.py:fetch_tesouro_transparente_csv."
   },
   "record_fields": {
-    "id_field": "Tipo Titulo + Data Vencimento",
+    "id_field": "titulo_id",
+    "name_field": "Data Vencimento",
     "type_field": "Tipo Titulo",
     "maturity_field": "Data Vencimento",
     "rate_field": "Taxa Compra Manha",
-    "price_field": "PU Compra Manha"
+    "price_field": "PU Compra Manha",
+    "table_columns": [
+      {"field": "Taxa Compra Manha", "label": "taxa%", "width": 7, "decimals": 2},
+      {"field": "PU Compra Manha", "label": "pu_r$", "width": 12, "decimals": 2, "thousands": true},
+      {"field": "prazo_anos", "label": "prazo_a", "width": 8, "decimals": 1},
+      {"field": "indexador", "label": "index", "width": 10, "type": "text"}
+    ]
+  },
+  "filters": {
+    "min_value_field": {"field": "PU Compra Manha", "min": 0},
+    "notes": "So garante que o preco de compra veio numerico (>= 0); descarta linhas onde o parse do PU falhou. Nao ha filtro de risco de credito porque todos os titulos do Tesouro Direto tem o mesmo emissor (Uniao) -- o risco relevante aqui e' de mercado/liquidez, nao de credito."
   },
   "risk_score": {
-    "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre os titulos retornados",
-    "methodology": "PLANEJADO: titulos publicos federais tem risco de credito soberano (baixo e uniforme dentro do Tesouro Direto), entao o score aqui foca em risco de mercado/liquidez: prazo ate o vencimento (marcacao a mercado gera mais oscilacao em titulos longos) e tipo de indexador (prefixado x IPCA+ x Selic). Formulas de normalizacao a definir junto com a implementacao do adapter.",
+    "scale": "0 (risco de mercado/liquidez mais alto) a 100 (mais baixo), relativo apenas entre os titulos retornados nesta consulta",
+    "methodology": "Todos os titulos do Tesouro Direto tem o mesmo risco de credito (soberano, Uniao), entao este score NAO mede calote -- mede risco de MARCACAO A MERCADO: o quanto o preco do titulo pode oscilar se voce precisar vender antes do vencimento. Titulos mais longos e prefixados oscilam mais; titulos curtos e pos-fixados (Selic) oscilam menos. NAO e recomendacao de investimento -- prazo mais longo pode ser exatamente o que voce quer se o objetivo bate com o vencimento.",
+    "missing_field_penalty_points": 5,
+    "missing_field_penalty_notes": "Desconta 5 pontos por componente ausente, alem de redistribuir peso -- mesma politica usada em config/defi.json, pra manter o score honesto quando o dado de origem veio incompleto.",
     "components": [
       {
         "field": "prazo_anos",
         "label": "Prazo ate o vencimento",
         "weight": 0.5,
-        "transform": "TBD",
-        "notes": "Titulos mais longos sofrem mais marcacao a mercado se vendidos antes do vencimento; prazo maior = mais risco de oscilacao de preco no curto prazo."
+        "transform": "minmax_capped",
+        "cap": 30,
+        "invert": true,
+        "notes": "Prazo calculado a partir de 'Data Vencimento' real do CSV menos a data de hoje, em anos. Capado em 30 anos (titulos mais longos que isso pontuam o minimo nesse componente). invert=true porque prazo MAIOR significa MAIS risco de marcacao a mercado, entao o normalizado e' invertido antes de entrar na media."
       },
       {
         "field": "indexador",
-        "label": "Tipo de indexador (Prefixado / IPCA+ / Selic)",
+        "label": "Tipo de indexador",
         "weight": 0.5,
-        "transform": "TBD",
-        "notes": "Selic (pos-fixado) tende a ter menor oscilacao de PU no curto prazo; prefixado tende a ter mais. Regra categorica a definir."
+        "transform": "categorical_rules",
+        "derive_from": ["indexador"],
+        "rules": [
+          {"when": {"indexador": "Selic"}, "score": 1.00, "label": "pos-fixado Selic"},
+          {"when": {"indexador": "IPCA+"}, "score": 0.65, "label": "IPCA+ (hibrido)"},
+          {"when": {"indexador": "IGPM+"}, "score": 0.55, "label": "IGPM+ (hibrido, indexador menos liquido)"},
+          {"when": {"indexador": "Prefixado"}, "score": 0.40, "label": "prefixado"},
+          {"when": {}, "score": 0.50, "label": "outro/nao classificado"}
+        ],
+        "notes": "Indexador derivado do campo 'Tipo Titulo' do CSV real (ver _INDEXADOR_MAP em scripts/fetch.py). Selic tende a ter PU mais estavel no curto prazo (acompanha a taxa basica quase 1:1); prefixado tende a oscilar mais com expectativa de juros; IPCA+/IGPM+ ficam no meio."
       }
     ]
   },

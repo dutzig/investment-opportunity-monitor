@@ -81,7 +81,16 @@ def fetch_text(
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as exc:
             last_exc = exc
             if attempt < max_retries - 1:
-                delay = base_delay * (2**attempt)
+                retry_after = None
+                if isinstance(exc, urllib.error.HTTPError):
+                    retry_after = exc.headers.get("Retry-After") if exc.headers else None
+                if retry_after:
+                    try:
+                        delay = float(retry_after)
+                    except ValueError:
+                        delay = base_delay * (2**attempt)
+                else:
+                    delay = base_delay * (2**attempt)
                 time.sleep(delay)
     raise RuntimeError(f"Falha ao buscar {url} apos {max_retries} tentativas") from last_exc
 

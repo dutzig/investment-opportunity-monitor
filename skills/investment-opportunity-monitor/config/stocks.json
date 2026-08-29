@@ -1,55 +1,68 @@
 {
   "asset_class": "stocks",
-  "display_name": "Acoes / ETFs",
-  "status": "TEMPLATE_NAO_IMPLEMENTADO",
-  "status_notes": "Endpoint validado (Yahoo Finance chart API, HTTP 200 sem key). Falta escrever o adapter fetch_stocks() em scripts/fetch.py que transforme a resposta em records padronizados. Ver docs/adding-asset-class.md. NAO usar em producao ate remover este status.",
+  "display_name": "Ações B3 (Brasil)",
   "source": {
     "type": "yahoo_finance_chart",
     "endpoint": "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
     "requires_api_key": false,
-    "fallback_source": {
-      "type": "alpha_vantage",
-      "endpoint": "https://www.alphavantage.co/query",
-      "requires_api_key": true,
-      "api_key_env_var": "ALPHA_VANTAGE_API_KEY",
-      "notes": "Camada gratuita: 25 requisicoes/dia, 5/minuto. Usar so como fallback se Yahoo bloquear."
-    },
-    "notes": "Endpoint nao documentado oficialmente pela Yahoo (usado pelo pacote yfinance), mas estavel e amplamente utilizado. Requer User-Agent de navegador. Testado manualmente: retorna 200 para tickers com sufixo .SA (B3)."
+    "notes": "Endpoint nao documentado oficialmente pela Yahoo (o mesmo que o pacote yfinance usa por baixo), mas estavel e amplamente utilizado. Validado manualmente em 2026-08-29 para tickers .SA (B3) e para o indice ^BVSP (Ibovespa), sem precisar de User-Agent especial."
   },
   "watchlist": {
-    "tickers": [],
-    "notes": "Preencher com os tickers que devem ser monitorados, ex: ['PETR4.SA', 'VALE3.SA', 'IVVB11.SA']"
+    "tickers": [
+      "PETR4.SA", "VALE3.SA", "ITUB4.SA", "BBDC4.SA", "ABEV3.SA",
+      "WEGE3.SA", "B3SA3.SA", "ITSA4.SA", "BBAS3.SA", "RENT3.SA",
+      "ELET3.SA", "SUZB3.SA", "JBSS3.SA", "RADL3.SA", "EQTL3.SA",
+      "PRIO3.SA", "RAIL3.SA", "GGBR4.SA"
+    ],
+    "benchmark_ticker": "^BVSP",
+    "history_range": "6mo",
+    "request_interval_seconds": 1.5,
+    "notes": "Lista inicial com papeis liquidos do Ibovespa, so pra ter um ponto de partida real -- edite livremente pra sua propria watchlist. Ao contrario de DeFi (universo completo via /pools) e renda fixa (todos os titulos do Tesouro), acoes nao tem um endpoint gratuito que liste 'todas' com metricas prontas, entao esta classe funciona por watchlist explicita. request_interval_seconds espaca as chamadas por ticker pra nao disparar rate limit (HTTP 429) da Yahoo -- watchlists maiores que ~20 tickers podem precisar de um intervalo maior."
   },
   "record_fields": {
     "id_field": "ticker",
     "name_field": "shortName",
     "price_field": "regularMarketPrice",
-    "volume_field": "regularMarketVolume"
+    "table_columns": [
+      {"field": "regularMarketPrice", "label": "preco_r$", "width": 9, "decimals": 2},
+      {"field": "volatility_30d", "label": "vol30d%", "width": 8, "decimals": 1},
+      {"field": "beta", "label": "beta", "width": 6, "decimals": 2},
+      {"field": "avg_volume_brl", "label": "vol_r$_dia", "width": 15, "decimals": 0, "thousands": true}
+    ]
+  },
+  "filters": {
+    "notes": "Sem filtro por padrao -- a watchlist ja e' curada manualmente. Se algum ticker vier com erro (_fetch_error), ele simplesmente fica sem os campos numericos e o risk_score marca como indisponivel, sem ser descartado silenciosamente."
   },
   "risk_score": {
-    "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre os tickers na watchlist",
-    "methodology": "PLANEJADO: media ponderada de volatilidade historica (desvio padrao dos retornos diarios), beta vs indice de referencia (ex: IBOV ou S&P500), e liquidez media (volume financeiro medio). Pesos e formulas de normalizacao a definir junto com a implementacao do adapter -- nao inventar numeros aqui antes de validar contra a fonte.",
+    "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre os tickers desta watchlist",
+    "methodology": "Media ponderada de 3 componentes calculados a partir do historico de precos real (Yahoo Finance, janela definida em watchlist.history_range). NAO captura risco de governanca, setorial ou de evento especifico da empresa -- so risco estatistico de mercado (volatilidade, sensibilidade ao indice, liquidez). NAO e recomendacao de investimento.",
+    "missing_field_penalty_points": 5,
+    "missing_field_penalty_notes": "Mesma politica de config/defi.json e config/fixed-income.json: desconta 5 pontos por componente ausente (ex: ticker novo demais pra ter 30 dias de historico), alem de redistribuir peso.",
     "components": [
       {
         "field": "volatility_30d",
-        "label": "Volatilidade anualizada (30 dias)",
+        "label": "Volatilidade anualizada (30 dias, %)",
         "weight": 0.40,
-        "transform": "TBD",
-        "notes": "Menor volatilidade = score mais alto (menos risco relativo)."
+        "transform": "minmax_capped",
+        "cap": 80,
+        "invert": true,
+        "notes": "Desvio padrao dos retornos diarios dos ultimos 30 pregoes, anualizado (x sqrt(252)) e em %. Capado em 80% ao ano (acima disso e' tratado como risco maximo nesse componente). invert=true porque volatilidade MAIOR significa MAIS risco, entao o normalizado e' invertido."
       },
       {
         "field": "beta",
-        "label": "Beta vs indice de referencia",
+        "label": "Beta vs Ibovespa (magnitude)",
         "weight": 0.30,
-        "transform": "TBD",
-        "notes": "Beta mais proximo de 1 (ou menor) tende a indicar menos risco sistemico relativo, dependendo do apetite do usuario -- discutir formula antes de implementar."
+        "transform": "abs_minmax_capped",
+        "cap": 2.0,
+        "invert": true,
+        "notes": "Beta calculado via covariancia dos retornos diarios da acao com o Ibovespa (^BVSP) dividida pela variancia do Ibovespa, na mesma janela. Usa abs(beta) porque tanto um beta bem negativo quanto bem positivo indicam mais sensibilidade ao mercado do que um beta perto de zero -- nao e' so 'beta alto e' ruim'. invert=true porque magnitude MAIOR = MAIS risco sistemico relativo."
       },
       {
         "field": "avg_volume_brl",
-        "label": "Liquidez media (volume financeiro diario)",
+        "label": "Liquidez media (R$/dia, 30 pregoes)",
         "weight": 0.30,
-        "transform": "TBD",
-        "notes": "Baixa liquidez aumenta risco de nao conseguir sair da posicao a um bom preco."
+        "transform": "log10_minmax",
+        "notes": "Media do volume financeiro diario (fechamento x volume em numero de acoes) dos ultimos 30 pregoes. Log-escala porque a liquidez varia em ordens de grandeza entre blue chips e papeis menores. Liquidez maior = mais facil sair da posicao a um bom preco = menos risco relativo."
       }
     ]
   },

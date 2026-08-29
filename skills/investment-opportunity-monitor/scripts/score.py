@@ -2,7 +2,12 @@
 
 Nenhuma logica especifica de classe de ativo vive aqui -- os componentes,
 pesos e regras vem inteiramente de um bloco de config (ex: 'risk_score' ou
-'opportunity_score' do config JSON da classe). compute_scores() e chamado
+'opportunity_score' do config JSON da classe). Todo transform aqui e'
+"maior normalizado = melhor" por padrao; quando o campo cru vai na
+direcao oposta (ex: prazo mais longo = mais risco, nao menos), o
+componente marca "invert": true no config em vez de precisar de um
+transform espelhado -- 1 menos o valor normalizado, aplicado depois de
+qualquer transform. compute_scores() e chamado
 uma vez por bloco de score que a classe define, escrevendo o resultado no
 campo indicado por output_field -- e' assim que o opportunity_score de
 DeFi reaproveita este mesmo motor: roda depois do risk_score, com um
@@ -49,6 +54,19 @@ def _transform_minmax_capped(value, _dataset_values, comp):
     return max(0.0, min(1.0, value / cap))
 
 
+def _transform_abs_minmax_capped(value, _dataset_values, comp):
+    """Como minmax_capped, mas usa magnitude (abs). Util quando o risco vem
+    de o quanto um valor se afasta de zero em qualquer direcao -- ex: beta
+    de uma acao: tanto um beta bem negativo quanto bem positivo indicam mais
+    risco sistemico relativo do que um beta perto de zero."""
+    if value is None:
+        return None
+    cap = comp.get("cap")
+    if not cap or cap <= 0:
+        return None
+    return max(0.0, min(1.0, abs(value) / cap))
+
+
 def _transform_categorical_rules(_value, _dataset_values, comp, record=None):
     derive_from = comp.get("derive_from", [])
     context = {k: record.get(k) for k in derive_from} if record else {}
@@ -75,6 +93,7 @@ def _transform_relative_deviation_inverse(_value, _dataset_values, comp, record=
 TRANSFORMS = {
     "log10_minmax": _transform_log10_minmax,
     "minmax_capped": _transform_minmax_capped,
+    "abs_minmax_capped": _transform_abs_minmax_capped,
     "categorical_rules": _transform_categorical_rules,
     "relative_deviation_inverse": _transform_relative_deviation_inverse,
 }
@@ -112,6 +131,9 @@ def compute_scores(records: list[dict], score_config: dict, output_field: str = 
             if normalized is None:
                 missing.append(comp.get("label", field))
                 continue
+
+            if comp.get("invert"):
+                normalized = 1.0 - normalized
 
             weight = comp["weight"]
             weighted_sum += normalized * weight

@@ -13,7 +13,12 @@
     "protocol_field": "project",
     "chain_field": "chain",
     "yield_field": "apy",
-    "tvl_field": "tvlUsd"
+    "tvl_field": "tvlUsd",
+    "table_columns": [
+      {"field": "apy", "label": "apy%", "width": 7, "decimals": 2},
+      {"field": "tvlUsd", "label": "tvl_usd", "width": 15, "decimals": 0, "thousands": true},
+      {"field": "chain", "label": "chain", "width": 10, "type": "text"}
+    ]
   },
   "filters": {
     "min_value_field": {"field": "tvlUsd", "min": 1000000},

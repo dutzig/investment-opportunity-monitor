@@ -90,20 +90,32 @@ def _rank_value(record: dict, field: str):
     return v if isinstance(v, (int, float)) else -1
 
 
+def _format_cell(value, col: dict) -> str:
+    width = col.get("width", 10)
+    if col.get("type") == "text":
+        return f"{str(value if value is not None else ''):<{width}}"[:width]
+    if not isinstance(value, (int, float)):
+        return f"{'N/D':>{width}}"
+    decimals = col.get("decimals", 2)
+    if col.get("thousands"):
+        return f"{value:>{width},.{decimals}f}"
+    return f"{value:>{width}.{decimals}f}"
+
+
 def print_table(records: list[dict], config: dict, top: int, rank_by: str) -> None:
     fields = config["record_fields"]
-    name_field = fields.get("name_field")
-    protocol_field = fields.get("protocol_field") or fields.get("type_field")
-    chain_field = fields.get("chain_field")
-    yield_field = fields.get("yield_field")
-    tvl_field = fields.get("tvl_field")
+    name_field = fields.get("name_field") or fields.get("id_field")
+    label_field = fields.get("protocol_field") or fields.get("type_field")
+    columns = fields.get("table_columns", [])
     has_opportunity = "opportunity_score" in config
 
     ranked = sorted(records, key=lambda r: _rank_value(r, rank_by), reverse=True)[:top]
 
     print(f"\n{config['display_name']} — top {len(ranked)} por {rank_by} (dados reais, {config['source']['endpoint']})\n")
-    opp_col = f"{'oport.':>6}  " if has_opportunity else ""
-    header = f"{'risco':>6}  {opp_col}{'apy%':>7}  {'tvl_usd':>15}  {'chain':<10}  {'protocolo':<18}  ativo"
+    opp_header = f"{'oport.':>6}  " if has_opportunity else ""
+    col_headers = "  ".join(f"{c['label']:>{c.get('width', 10)}}" for c in columns)
+    label_header = f"{'categoria':<18}  " if label_field else ""
+    header = f"{'risco':>6}  {opp_header}{col_headers}  {label_header}ativo"
     print(header)
     print("-" * len(header))
     for r in ranked:
@@ -113,14 +125,12 @@ def print_table(records: list[dict], config: dict, top: int, rank_by: str) -> No
         if has_opportunity:
             opp = r.get("opportunity_score")
             opp_str = (f"{opp:>6.1f}  " if isinstance(opp, (int, float)) else f"{'N/D':>6}  ")
-        apy = r.get(yield_field)
-        apy_str = f"{apy:>7.2f}" if isinstance(apy, (int, float)) else f"{'N/D':>7}"
-        tvl = r.get(tvl_field)
-        tvl_str = f"{tvl:>15,.0f}" if isinstance(tvl, (int, float)) else f"{'N/D':>15}"
-        chain = str(r.get(chain_field, ""))[:10]
-        protocol = str(r.get(protocol_field, ""))[:18]
-        name = str(r.get(name_field, ""))
-        print(f"{score_str}  {opp_str}{apy_str}  {tvl_str}  {chain:<10}  {protocol:<18}  {name}")
+        cells = "  ".join(_format_cell(r.get(c["field"]), c) for c in columns)
+        label_str = f"{str(r.get(label_field, ''))[:18]:<18}  " if label_field else ""
+        name = str(r.get(name_field) or r.get(fields.get("id_field"), ""))
+        print(f"{score_str}  {opp_str}{cells}  {label_str}{name}")
+        if r.get("_fetch_error"):
+            print(f"        (busca falhou: {r['_fetch_error']})")
         missing = r.get("_risk_score_missing_components") or []
         if missing:
             print(f"        (risco calculado sem: {', '.join(missing)})")

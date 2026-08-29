@@ -5,10 +5,12 @@ investimento, somente-leitura, cobrindo múltiplas classes de ativo por
 configuração (não por código duplicado).
 
 - Skill: [`skills/investment-opportunity-monitor/SKILL.md`](skills/investment-opportunity-monitor/SKILL.md)
-- Status por classe de ativo: DeFi completo (DefiLlama), ações/ETFs e renda
-  fixa/Tesouro Direto ainda como template (endpoint validado, adapter
-  pendente) — ver [`docs/adding-asset-class.md`](skills/investment-opportunity-monitor/docs/adding-asset-class.md)
-- Deploy em VPS: [`docs/deploy-vps.md`](skills/investment-opportunity-monitor/docs/deploy-vps.md)
+- Classes implementadas e testadas contra a fonte real: **DeFi** (DefiLlama),
+  **renda fixa / Tesouro Direto** (Tesouro Transparente) e **ações B3**
+  (Yahoo Finance, por watchlist) — ver
+  [`docs/adding-asset-class.md`](skills/investment-opportunity-monitor/docs/adding-asset-class.md)
+  pra adicionar outras (ex: ações de outros mercados)
+- Deploy em VPS: [`docs/deploy-vps.md`](skills/investment-opportunity-monitor/docs/deploy-vps.md) — ainda não executado, só documentado
 
 ## Instalar
 

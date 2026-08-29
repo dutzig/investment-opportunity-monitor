@@ -58,21 +58,33 @@ quando a fonte de dado é nova — um adapter pequeno em `scripts/fetch.py`.
    Compare uma amostra do output contra a fonte original antes de
    considerar a classe pronta. Não reporte como concluído sem esse passo.
 
-## Exemplo real: `stocks.json` e `fixed-income.json`
+## Exemplos reais já implementados
 
-Os dois já têm `source.endpoint` validado (retornam HTTP 200, sem API key
-obrigatória) e o bloco `risk_score` rascunhado com `"transform": "TBD"` —
-ou seja, os pesos e fórmulas ainda não foram decididos porque isso exige
-ver a forma real dos dados primeiro. Ao implementar:
+`config/defi.json`, `config/fixed-income.json` e `config/stocks.json` são os
+três exemplos completos — leia-os antes de criar uma classe nova, cada um
+mostra um padrão diferente:
 
-- **stocks**: escrever `fetch_yahoo_finance_chart()`, parsear a resposta
-  `chart.result[0]` (preço, volume, série histórica), calcular volatilidade
-  anualizada e liquidez a partir da série antes de fechar os pesos do score.
-- **fixed-income**: escrever `fetch_tesouro_transparente_csv()`, parsear o
-  CSV (`;` separado, decimal `,`, encoding `latin-1`), e decidir a regra
-  categórica de indexador (Prefixado/IPCA+/Selic) só depois de ver os
-  valores reais que a coluna `Tipo Titulo` contém.
+- **defi**: universo completo via um único endpoint JSON
+  (`fetch_defillama_yields`), sem watchlist, score puro + `opportunity_score`
+  combinando yield com risco.
+- **fixed-income**: universo completo via um CSV histórico gigante
+  (`fetch_tesouro_transparente_csv`), filtrado no adapter pra só a "Data
+  Base" mais recente. Usa `"invert": true` no prazo (prazo maior = mais
+  risco, não menos) e campos derivados calculados de dado real (`prazo_anos`,
+  `indexador`) em vez de vindos prontos da API.
+- **stocks (B3)**: fonte que não lista "todos" os ativos, então funciona por
+  `watchlist.tickers` explícita (`fetch_yahoo_finance_chart`), com
+  `request_interval_seconds` pra não tomar rate limit (HTTP 429) da fonte —
+  quando um ticker falha, ele fica marcado com `_fetch_error` e o
+  `risk_score` sai "indisponível" pra aquele ativo, sem derrubar a consulta
+  inteira nem inventar dado. Beta usa `abs_minmax_capped` (magnitude importa,
+  não o sinal).
 
-Remova o campo `"status": "TEMPLATE_NAO_IMPLEMENTADO"` do config só depois
-que o adapter estiver escrito, testado contra a fonte real, e você tiver
-mostrado uma amostra do output para validação.
+Se for adicionar uma classe nova cuja fonte não lista "todos" os ativos
+gratuitamente (ex: ações de outro mercado), copie o padrão de watchlist do
+`stocks.json` em vez de reinventar.
+
+Ao terminar uma classe nova, remova qualquer campo `"status":
+"TEMPLATE_NAO_IMPLEMENTADO"` do config só depois que o adapter estiver
+escrito, testado contra a fonte real, e você tiver mostrado uma amostra do
+output para validação.
