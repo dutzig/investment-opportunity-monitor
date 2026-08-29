@@ -1,0 +1,103 @@
+{
+  "asset_class": "fiis",
+  "display_name": "Fundos Imobiliarios (FII, B3)",
+  "source": {
+    "type": "bolsai_fii",
+    "endpoint": "https://api.usebolsai.com/api/v1/fiis/{ticker}",
+    "requires_api_key": true,
+    "api_key_env_var": "BOLSAI_API_KEY",
+    "notes": "bolsai.com -- unica fonte que achamos com P/VP, dividend yield e vacancia de FII sem custo (brapi.dev exige token ate pra cotacao basica de FII). Cadastro gratuito, sem cartao, 200 requisicoes/dia. Chave NUNCA fica neste arquivo (repo publico) -- sempre lida da variavel de ambiente BOLSAI_API_KEY. Validado manualmente em 2026-08-29 contra KNRI11, retornou dado real e completo."
+  },
+  "watchlist": {
+    "tickers": [
+      "CPTS11", "HGLG11", "HGRU11", "KFOF11", "KNCR11", "KNRI11",
+      "KNUQ11", "LVBI11", "PVBI11", "VGIP11", "VGIR11", "XPML11"
+    ],
+    "request_interval_seconds": 0.5,
+    "notes": "Os 12 FIIs da uma carteira de exemplo, exceto HGLG12 e HGRU12 -- esses sao 'Direito de subscricao' (instrumento temporario, preco R$0,00 na planilha), nao o fundo em si, entao nao fazem sentido no mesmo score. Edite livremente pra outros FIIs."
+  },
+  "record_fields": {
+    "id_field": "ticker",
+    "name_field": "name",
+    "type_field": "fund_type",
+    "price_field": "close_price",
+    "table_columns": [
+      {"field": "close_price", "label": "preco_r$", "width": 9, "decimals": 2},
+      {"field": "pvp", "label": "p/vp", "width": 6, "decimals": 2},
+      {"field": "dividend_yield_ttm", "label": "dy_ttm%", "width": 8, "decimals": 2},
+      {"field": "vacancy_pct", "label": "vacanc%", "width": 8, "decimals": 2}
+    ]
+  },
+  "filters": {
+    "notes": "Sem filtro por padrao -- a watchlist ja e' a watchlist de exemplo, curada manualmente."
+  },
+  "risk_score": {
+    "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre os FIIs desta watchlist",
+    "methodology": "Media ponderada de 4 componentes vindos de dado fundamentalista real (bolsai): tamanho do fundo (proxy de liquidez/estabilidade), desvio do P/VP em relacao a 1,0 (premio ou desconto extremo sinaliza precificacao anomala), vacancia (so' relevante pra fundos tipo Tijolo -- fundos Papel/FoF ficam sem esse dado, marcado indisponivel e redistribuido) e inadimplencia dos inquilinos. NAO captura risco de credito dos CRIs em fundos Papel, nem qualidade de gestao especifica -- so' os 4 fatores listados. NAO e recomendacao de investimento.",
+    "missing_field_penalty_points": 5,
+    "missing_field_penalty_notes": "Mesma politica das outras classes: desconta 5 pontos por componente ausente (ex: vacancia nao existe pra fundo Papel), alem de redistribuir peso.",
+    "components": [
+      {
+        "field": "net_asset_value",
+        "label": "Patrimonio liquido do fundo (proxy de porte/liquidez)",
+        "weight": 0.30,
+        "transform": "log10_minmax",
+        "notes": "Fundo maior tende a ter mais liquidez em bolsa e mais diversificacao interna de ativos/inquilinos. Log-escala porque o patrimonio varia em ordens de grandeza entre FIIs pequenos e grandes."
+      },
+      {
+        "field": "pvp_deviation",
+        "label": "Desvio do P/VP em relacao a 1,0",
+        "weight": 0.25,
+        "transform": "minmax_capped",
+        "cap": 0.5,
+        "invert": true,
+        "notes": "Campo derivado = abs(P/VP - 1,0), calculado a partir do P/VP real retornado pela API. P/VP muito acima ou muito abaixo de 1,0 sinaliza precificacao fora do 'normal' -- premio caro demais, ou desconto que pode refletir problema real no fundo (nao necessariamente barganha). invert=true: quanto maior o desvio, menor o score nesse componente."
+      },
+      {
+        "field": "vacancy_pct",
+        "label": "Vacancia (% da area sem locatario)",
+        "weight": 0.25,
+        "transform": "minmax_capped",
+        "cap": 30,
+        "invert": true,
+        "notes": "So' vem preenchido pra fundos tipo Tijolo (imoveis fisicos) -- fundos Papel/Fundo de Fundos ficam sem esse dado, marcado indisponivel, peso redistribuido. Vacancia maior = menos receita de aluguel garantida = mais risco."
+      },
+      {
+        "field": "delinquency_pct",
+        "label": "Inadimplencia dos locatarios (%)",
+        "weight": 0.20,
+        "transform": "minmax_capped",
+        "cap": 15,
+        "invert": true,
+        "notes": "Mesma logica da vacancia -- so' relevante pra Tijolo. Inadimplencia maior = fluxo de caixa do fundo mais incerto."
+      }
+    ]
+  },
+  "opportunity_score": {
+    "scale": "0 (oportunidade fraca) a 100 (oportunidade forte), relativo apenas entre os FIIs desta consulta",
+    "methodology": "Combina o dividend yield (TTM) com o risk_score ja calculado, mesmo motor generico reaproveitado (score.py). Separa 'quao arriscado' de 'quao bom e o retorno de renda dado o risco'. NAO e recomendacao de investimento -- dividend yield alto pode ser sinal de fundo saudavel OU de mercado precificando risco que o yield nao compensa (yield trap); olhe os dois numeros juntos, nao so' o maior yield.",
+    "components": [
+      {
+        "field": "dividend_yield_ttm",
+        "label": "Dividend Yield (12 meses)",
+        "weight": 0.55,
+        "transform": "minmax_capped",
+        "cap": 20,
+        "notes": "Yield acima de 20% ao ano e' tratado como maximo nesse componente (normalmente sinaliza distorcao de preco, nao sustentabilidade real do dividendo)."
+      },
+      {
+        "field": "risk_score",
+        "label": "Risco (risk_score ja calculado, 0-100)",
+        "weight": 0.45,
+        "transform": "minmax_capped",
+        "cap": 100,
+        "notes": "Reaproveita o risk_score como componente 0-1 (valor/100), mesmo padrao usado no opportunity_score de DeFi."
+      }
+    ]
+  },
+  "history": {
+    "backend": "sqlite",
+    "path": "data/fiis_history.db",
+    "table": "fiis_snapshots"
+  }
+}

@@ -13,13 +13,14 @@ onde vem o dado, quais campos importam, e como calcular um score de risco
 comparativo — a logica de busca, filtro, score e historico e **compartilhada**
 entre classes (`scripts/`), nunca duplicada por classe de ativo.
 
-Classes disponiveis hoje (as tres completas e testadas contra a fonte real):
+Classes disponiveis hoje (todas completas e testadas contra a fonte real):
 
 | Classe | Config | Fonte | Observacao |
 |---|---|---|---|
 | DeFi (yield farming, lending, LPs) | `config/defi.json` | DefiLlama `/pools`, sem key | Universo completo (todas as pools ativas) |
 | Renda fixa — Tesouro Direto (BR) | `config/fixed-income.json` | CSV oficial do Tesouro Transparente, sem key | Universo completo (todos os titulos, foto do dia mais recente) |
 | Acoes B3 (BR) | `config/stocks.json` | Yahoo Finance chart API, sem key | Watchlist = uniao real de Ibovespa + Small Caps (149 tickers, via API oficial da B3), dividida em 7 fatias diarias — ver abaixo |
+| Fundos Imobiliarios (FII, B3) | `config/fiis.json` | bolsai (P/VP, dividend yield, vacancia, inadimplencia) | **Exige API key gratuita** (usebolsai.com, sem cartao) — nunca no config, sempre em `BOLSAI_API_KEY`. Watchlist = indice IFIX oficial da B3 (106 fundos). |
 
 Acoes de outros mercados (ex: EUA via Alpha Vantage) nao foram implementadas — o foco atual e' pt-BR / B3.
 
@@ -45,6 +46,18 @@ Rodar uma classe completa:
 ```bash
 python3 scripts/monitor.py --asset-class defi --top 15
 ```
+
+Classes que exigem API key (hoje so' `fiis`) precisam da variavel de
+ambiente definida antes de rodar -- nunca coloque a chave dentro de um
+config (os configs vao pro git, que e' publico):
+
+```bash
+export BOLSAI_API_KEY="sua_chave_aqui"
+python3 scripts/monitor.py --asset-class fiis --top 12
+```
+
+Na VPS, defina isso no `Environment=` do arquivo `.service` do systemd
+(nunca commitado), nao num `.env` dentro do repo.
 
 Rodar e obter JSON (para consumir em outro processo, ex: agendamento):
 

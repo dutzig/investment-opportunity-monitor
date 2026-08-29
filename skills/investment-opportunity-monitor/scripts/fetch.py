@@ -15,6 +15,7 @@ funcao aqui e registre em ADAPTERS. Veja docs/adding-asset-class.md.
 import csv
 import io
 import math
+import os
 import statistics
 import time
 from datetime import date, datetime
@@ -233,10 +234,58 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
     return records
 
 
+def fetch_bolsai_fii(config: dict, cache_ttl: int) -> list[dict]:
+    """Fundamentos reais de FII (P/VP, dividend yield, vacancia,
+    inadimplencia) via bolsai. Exige API key -- NUNCA guardada no config
+    (o repo e' publico), le' sempre de variavel de ambiente."""
+    source = config["source"]
+    endpoint_template = source["endpoint"]
+    api_key_env_var = source.get("api_key_env_var", "BOLSAI_API_KEY")
+    api_key = os.environ.get(api_key_env_var)
+    if not api_key:
+        raise RuntimeError(
+            f"Variavel de ambiente {api_key_env_var} nao esta definida. "
+            f"Pegue uma chave gratuita em usebolsai.com e exporte antes de rodar: "
+            f"export {api_key_env_var}=sua_chave_aqui"
+        )
+
+    watchlist = config.get("watchlist", {})
+    tickers = watchlist.get("tickers", [])
+    if not tickers:
+        raise RuntimeError(
+            "watchlist.tickers esta vazio em config/fiis.json -- preencha com os "
+            "tickers de FII que quer monitorar (ex: 'KNRI11')."
+        )
+    request_interval = watchlist.get("request_interval_seconds", 0.5)
+
+    records = []
+    for i, ticker in enumerate(tickers):
+        if i > 0 and request_interval:
+            time.sleep(request_interval)
+        url = endpoint_template.format(ticker=ticker)
+        try:
+            data = fetch_json(url, ttl_seconds=cache_ttl, headers={"X-API-Key": api_key}, timeout=20.0)
+        except RuntimeError as exc:
+            records.append({"ticker": ticker, "_fetch_error": str(exc)})
+            continue
+        if data.get("error"):
+            records.append({"ticker": ticker, "_fetch_error": data.get("message", "erro desconhecido")})
+            continue
+
+        pvp = data.get("pvp")
+        record = dict(data)
+        record["ticker"] = ticker
+        record["pvp_deviation"] = abs(pvp - 1.0) if isinstance(pvp, (int, float)) else None
+        records.append(record)
+
+    return records
+
+
 ADAPTERS = {
     "defillama_yields": fetch_defillama_yields,
     "yahoo_finance_chart": fetch_yahoo_finance_chart,
     "tesouro_transparente_csv": fetch_tesouro_transparente_csv,
+    "bolsai_fii": fetch_bolsai_fii,
 }
 
 
