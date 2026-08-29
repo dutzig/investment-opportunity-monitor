@@ -1,0 +1,44 @@
+{
+  "asset_class": "fixed-income",
+  "display_name": "Renda Fixa / Tesouro Direto (Brasil)",
+  "status": "TEMPLATE_NAO_IMPLEMENTADO",
+  "status_notes": "Endpoint oficial validado (HTTP 200, CSV publico, sem key). Falta escrever o adapter fetch_fixed_income() em scripts/fetch.py que faca o parse do CSV (separador ';', decimal ',', encoding latin-1) e normalize os registros. Ver docs/adding-asset-class.md. NAO usar em producao ate remover este status.",
+  "source": {
+    "type": "tesouro_transparente_csv",
+    "endpoint": "https://www.tesourotransparente.gov.br/ckan/dataset/df56aa42-484a-4a59-8184-7676580c81e3/resource/796d2059-14e9-44e3-80c9-2d9e30b405c1/download/precotaxatesourodireto.csv",
+    "requires_api_key": false,
+    "notes": "Dataset oficial 'Taxas dos Titulos Ofertados pelo Tesouro Direto', publicado pelo Tesouro Transparente (governo federal). Validado manualmente em 2026-08-29 (HTTP 200). Formato: CSV ';'-separado, atualizado diariamente apos fechamento do mercado."
+  },
+  "record_fields": {
+    "id_field": "Tipo Titulo + Data Vencimento",
+    "type_field": "Tipo Titulo",
+    "maturity_field": "Data Vencimento",
+    "rate_field": "Taxa Compra Manha",
+    "price_field": "PU Compra Manha"
+  },
+  "risk_score": {
+    "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre os titulos retornados",
+    "methodology": "PLANEJADO: titulos publicos federais tem risco de credito soberano (baixo e uniforme dentro do Tesouro Direto), entao o score aqui foca em risco de mercado/liquidez: prazo ate o vencimento (marcacao a mercado gera mais oscilacao em titulos longos) e tipo de indexador (prefixado x IPCA+ x Selic). Formulas de normalizacao a definir junto com a implementacao do adapter.",
+    "components": [
+      {
+        "field": "prazo_anos",
+        "label": "Prazo ate o vencimento",
+        "weight": 0.5,
+        "transform": "TBD",
+        "notes": "Titulos mais longos sofrem mais marcacao a mercado se vendidos antes do vencimento; prazo maior = mais risco de oscilacao de preco no curto prazo."
+      },
+      {
+        "field": "indexador",
+        "label": "Tipo de indexador (Prefixado / IPCA+ / Selic)",
+        "weight": 0.5,
+        "transform": "TBD",
+        "notes": "Selic (pos-fixado) tende a ter menor oscilacao de PU no curto prazo; prefixado tende a ter mais. Regra categorica a definir."
+      }
+    ]
+  },
+  "history": {
+    "backend": "sqlite",
+    "path": "data/fixed_income_history.db",
+    "table": "fixed_income_snapshots"
+  }
+}

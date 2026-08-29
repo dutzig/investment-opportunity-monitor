@@ -1,0 +1,4 @@
+skills/investment-opportunity-monitor/data/
+__pycache__/
+*.pyc
+.venv/

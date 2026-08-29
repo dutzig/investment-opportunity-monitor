@@ -1,0 +1,77 @@
+{
+  "asset_class": "defi",
+  "display_name": "DeFi — Yield Farming / Lending / Liquidity Pools",
+  "source": {
+    "type": "defillama_yields",
+    "endpoint": "https://yields.llama.fi/pools",
+    "requires_api_key": false,
+    "notes": "Endpoint publico da DefiLlama (Yields/APY API), sem autenticacao. Retorna todas as pools ativas monitoradas em varias chains e protocolos. Doc: https://defillama.com/docs/api"
+  },
+  "record_fields": {
+    "id_field": "pool",
+    "name_field": "symbol",
+    "protocol_field": "project",
+    "chain_field": "chain",
+    "yield_field": "apy",
+    "tvl_field": "tvlUsd"
+  },
+  "filters": {
+    "min_value_field": {"field": "tvlUsd", "min": 1000000},
+    "range_field": {"field": "apy", "min": 0, "max": 1000},
+    "exclude_if": [{"field": "outlier", "equals": true}],
+    "notes": "outlier=true e um flag da propria DefiLlama para dados anomalos/suspeitos; excluido por padrao por qualidade de dado, nao por score de risco. APY acima do max normalmente indica pool nova/ilíquida ou incentivo temporario extremo."
+  },
+  "risk_score": {
+    "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre pools de DeFi retornadas nesta mesma consulta",
+    "methodology": "Media ponderada de 4 componentes normalizados 0-1. NAO e recomendacao de investimento: e um indicador comparativo calculado exclusivamente a partir de dados publicos de TVL, historico de dados da pool, tipo de exposicao ao ativo e estabilidade do APY. Risco de smart contract, de governanca e regulatorio NAO sao capturados por este score.",
+    "missing_field_policy": "exclude_and_renormalize",
+    "components": [
+      {
+        "field": "tvlUsd",
+        "label": "TVL (Total Value Locked, USD)",
+        "weight": 0.40,
+        "transform": "log10_minmax",
+        "notes": "TVL mais alto costuma indicar mais confianca do mercado e menor risco relativo de rug-pull, mas nao elimina risco de bug de contrato."
+      },
+      {
+        "field": "count",
+        "label": "Historico de dados da pool (dias de observacao na DefiLlama)",
+        "weight": 0.25,
+        "transform": "minmax_capped",
+        "cap": 730,
+        "notes": "Campo 'count' da API = numero de registros diarios coletados para essa pool, ou seja, ha quanto tempo ela esta sendo monitorada. Usado como proxy real de maturidade, sem chamada extra de API por protocolo. Capado em 730 dias (2 anos)."
+      },
+      {
+        "field": "asset_type",
+        "label": "Tipo de exposicao ao ativo",
+        "weight": 0.20,
+        "transform": "categorical_rules",
+        "derive_from": ["stablecoin", "exposure", "ilRisk"],
+        "rules": [
+          {"when": {"stablecoin": true, "exposure": "single"}, "score": 1.00, "label": "stablecoin unica"},
+          {"when": {"stablecoin": true, "exposure": "multi"}, "score": 0.80, "label": "LP so com stablecoins"},
+          {"when": {"stablecoin": false, "exposure": "single"}, "score": 0.60, "label": "ativo unico volatil"},
+          {"when": {"stablecoin": false, "exposure": "multi", "ilRisk": "no"}, "score": 0.45, "label": "LP volatil sem risco de IL reportado"},
+          {"when": {"stablecoin": false, "exposure": "multi", "ilRisk": "yes"}, "score": 0.30, "label": "LP volatil com risco de perda impermanente"},
+          {"when": {}, "score": 0.40, "label": "nao classificado"}
+        ],
+        "notes": "Regras avaliadas em ordem; a primeira que casar com os campos da pool vale. LPs volateis com impermanent loss reportado sao consideradas mais arriscadas que posicoes single-asset ou de stablecoin."
+      },
+      {
+        "field": "apy_stability",
+        "label": "Estabilidade do APY (atual vs media de 30 dias)",
+        "weight": 0.15,
+        "transform": "relative_deviation_inverse",
+        "value_field": "apy",
+        "reference_field": "apyMean30d",
+        "cap_deviation": 1.0,
+        "notes": "Desvio relativo grande entre o APY atual e a media de 30 dias sugere yield inflado artificialmente ou incentivo temporario prestes a acabar. Se apyMean30d vier nulo, o componente e marcado indisponivel e o peso e redistribuido."
+      }
+    ]
+  },
+  "history": {
+    "backend": "sqlite",
+    "path": "data/defi_history.db",
+    "table": "defi_snapshots"
+  }
+}

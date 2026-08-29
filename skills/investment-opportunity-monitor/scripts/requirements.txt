@@ -1,0 +1,6 @@
+# DeFi (implementado) roda só com a stdlib do Python 3.10+ (urllib, sqlite3, json).
+# Nenhuma dependência externa necessária hoje.
+#
+# Quando stocks.json / fixed-income.json forem implementados, dependências
+# adicionais (se precisarem, ex: nenhuma é estritamente necessária — dá pra
+# usar urllib puro como no adapter de DeFi) entram aqui.

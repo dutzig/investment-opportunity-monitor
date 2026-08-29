@@ -1,0 +1,61 @@
+{
+  "asset_class": "stocks",
+  "display_name": "Acoes / ETFs",
+  "status": "TEMPLATE_NAO_IMPLEMENTADO",
+  "status_notes": "Endpoint validado (Yahoo Finance chart API, HTTP 200 sem key). Falta escrever o adapter fetch_stocks() em scripts/fetch.py que transforme a resposta em records padronizados. Ver docs/adding-asset-class.md. NAO usar em producao ate remover este status.",
+  "source": {
+    "type": "yahoo_finance_chart",
+    "endpoint": "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
+    "requires_api_key": false,
+    "fallback_source": {
+      "type": "alpha_vantage",
+      "endpoint": "https://www.alphavantage.co/query",
+      "requires_api_key": true,
+      "api_key_env_var": "ALPHA_VANTAGE_API_KEY",
+      "notes": "Camada gratuita: 25 requisicoes/dia, 5/minuto. Usar so como fallback se Yahoo bloquear."
+    },
+    "notes": "Endpoint nao documentado oficialmente pela Yahoo (usado pelo pacote yfinance), mas estavel e amplamente utilizado. Requer User-Agent de navegador. Testado manualmente: retorna 200 para tickers com sufixo .SA (B3)."
+  },
+  "watchlist": {
+    "tickers": [],
+    "notes": "Preencher com os tickers que devem ser monitorados, ex: ['PETR4.SA', 'VALE3.SA', 'IVVB11.SA']"
+  },
+  "record_fields": {
+    "id_field": "ticker",
+    "name_field": "shortName",
+    "price_field": "regularMarketPrice",
+    "volume_field": "regularMarketVolume"
+  },
+  "risk_score": {
+    "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre os tickers na watchlist",
+    "methodology": "PLANEJADO: media ponderada de volatilidade historica (desvio padrao dos retornos diarios), beta vs indice de referencia (ex: IBOV ou S&P500), e liquidez media (volume financeiro medio). Pesos e formulas de normalizacao a definir junto com a implementacao do adapter -- nao inventar numeros aqui antes de validar contra a fonte.",
+    "components": [
+      {
+        "field": "volatility_30d",
+        "label": "Volatilidade anualizada (30 dias)",
+        "weight": 0.40,
+        "transform": "TBD",
+        "notes": "Menor volatilidade = score mais alto (menos risco relativo)."
+      },
+      {
+        "field": "beta",
+        "label": "Beta vs indice de referencia",
+        "weight": 0.30,
+        "transform": "TBD",
+        "notes": "Beta mais proximo de 1 (ou menor) tende a indicar menos risco sistemico relativo, dependendo do apetite do usuario -- discutir formula antes de implementar."
+      },
+      {
+        "field": "avg_volume_brl",
+        "label": "Liquidez media (volume financeiro diario)",
+        "weight": 0.30,
+        "transform": "TBD",
+        "notes": "Baixa liquidez aumenta risco de nao conseguir sair da posicao a um bom preco."
+      }
+    ]
+  },
+  "history": {
+    "backend": "sqlite",
+    "path": "data/stocks_history.db",
+    "table": "stocks_snapshots"
+  }
+}
