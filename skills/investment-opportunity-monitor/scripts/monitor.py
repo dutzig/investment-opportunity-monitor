@@ -29,7 +29,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 from fetch import fetch_records  # noqa: E402
 from score import compute_scores  # noqa: E402
-from storage import save_snapshot  # noqa: E402
+from storage import save_snapshot, load_latest_per_id  # noqa: E402
 
 
 def load_config(asset_class: str) -> dict:
@@ -134,6 +134,9 @@ def print_table(records: list[dict], config: dict, top: int, rank_by: str) -> No
         missing = r.get("_risk_score_missing_components") or []
         if missing:
             print(f"        (risco calculado sem: {', '.join(missing)})")
+        age = r.get("_snapshot_age_days")
+        if age is not None:
+            print(f"        (dado de {age:.1f} dia(s) atras -- visao combinada, nao e' busca de agora)")
 
 
 def main():
@@ -148,20 +151,36 @@ def main():
         default="risk_score",
         help="campo pra ordenar/cortar o top N (ex: risk_score, opportunity_score se a classe tiver esse bloco)",
     )
+    parser.add_argument(
+        "--rolling-days",
+        type=int,
+        default=0,
+        help="em vez de buscar ao vivo, mostra o registro mais recente de cada ativo dentro dos N dias "
+        "passados, lido do historico -- pra reconstruir o quadro completo de uma watchlist que so' e' "
+        "buscada em fatias por dia (ver watchlist.rotation). Nao busca nada ao vivo, nao grava snapshot novo.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.asset_class)
 
-    raw_records = fetch_records(config, cache_ttl=args.cache_ttl)
-    filtered = apply_filters(raw_records, config.get("filters", {}))
-    scored = compute_scores(filtered, config["risk_score"], output_field="risk_score")
-    if "opportunity_score" in config:
-        scored = compute_scores(scored, config["opportunity_score"], output_field="opportunity_score")
+    if args.rolling_days:
+        scored = load_latest_per_id(config, within_days=args.rolling_days)
+        if not scored:
+            raise SystemExit(
+                f"Sem historico dentro dos ultimos {args.rolling_days} dias -- rode sem --rolling-days "
+                f"pelo menos uma vez (ou espere os snapshots diarios acumularem) antes de usar essa flag."
+            )
+    else:
+        raw_records = fetch_records(config, cache_ttl=args.cache_ttl)
+        filtered = apply_filters(raw_records, config.get("filters", {}))
+        scored = compute_scores(filtered, config["risk_score"], output_field="risk_score")
+        if "opportunity_score" in config:
+            scored = compute_scores(scored, config["opportunity_score"], output_field="opportunity_score")
 
-    if not args.no_history:
-        db_path = save_snapshot(scored, config)
-        if not args.json:
-            print(f"[historico salvo em {db_path}]", file=sys.stderr)
+        if not args.no_history:
+            db_path = save_snapshot(scored, config)
+            if not args.json:
+                print(f"[historico salvo em {db_path}]", file=sys.stderr)
 
     if args.json:
         ranked = sorted(scored, key=lambda r: _rank_value(r, args.rank_by), reverse=True)[: args.top]

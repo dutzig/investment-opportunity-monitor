@@ -9,7 +9,7 @@ tendencia ao longo do tempo sem migrar tabelas quando um campo novo aparece.
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -83,6 +83,55 @@ def save_snapshot(records: list[dict], config: dict) -> Path:
         conn.close()
 
     return db_path
+
+
+def load_latest_per_id(config: dict, within_days: int = 7) -> list[dict]:
+    """Devolve o registro mais recente de cada record_id dentro da janela
+    de dias pedida -- usado pra reconstruir o quadro "cheio" de uma
+    watchlist grande que so' e' buscada em fatias por dia da semana (ver
+    watchlist.rotation em config/stocks.json). Cada registro devolvido
+    carrega '_snapshot_ts' e '_snapshot_age_days' pra deixar explicito
+    quao antigo aquele dado especifico e' -- nunca escondido."""
+    history_config = config["history"]
+    table = history_config["table"]
+    db_path = _resolve_db_path(history_config)
+    if not db_path.exists():
+        return []
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=within_days)).isoformat()
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        _ensure_table(conn, table)
+        cur = conn.execute(
+            f"""
+            SELECT record_json, snapshot_ts FROM {table} t1
+            WHERE snapshot_ts = (
+                SELECT MAX(snapshot_ts) FROM {table} t2
+                WHERE t2.record_id = t1.record_id AND t2.snapshot_ts >= ?
+            )
+            AND snapshot_ts >= ?
+            """,
+            (cutoff, cutoff),
+        )
+        rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    now = datetime.now(timezone.utc)
+    out = []
+    for row in rows:
+        record = json.loads(row["record_json"])
+        snap_ts = row["snapshot_ts"]
+        record["_snapshot_ts"] = snap_ts
+        try:
+            age_days = (now - datetime.fromisoformat(snap_ts)).total_seconds() / 86400
+            record["_snapshot_age_days"] = round(age_days, 1)
+        except ValueError:
+            record["_snapshot_age_days"] = None
+        out.append(record)
+    return out
 
 
 def load_history(config: dict, record_id: str, limit: int = 30) -> list[dict]:

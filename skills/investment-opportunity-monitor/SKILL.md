@@ -19,9 +19,26 @@ Classes disponiveis hoje (as tres completas e testadas contra a fonte real):
 |---|---|---|---|
 | DeFi (yield farming, lending, LPs) | `config/defi.json` | DefiLlama `/pools`, sem key | Universo completo (todas as pools ativas) |
 | Renda fixa — Tesouro Direto (BR) | `config/fixed-income.json` | CSV oficial do Tesouro Transparente, sem key | Universo completo (todos os titulos, foto do dia mais recente) |
-| Acoes B3 (BR) | `config/stocks.json` | Yahoo Finance chart API, sem key | Por watchlist (nao existe endpoint gratuito que liste "todas" as acoes com metricas prontas) — edite `watchlist.tickers` no config |
+| Acoes B3 (BR) | `config/stocks.json` | Yahoo Finance chart API, sem key | Watchlist = uniao real de Ibovespa + Small Caps (149 tickers, via API oficial da B3), dividida em 7 fatias diarias — ver abaixo |
 
 Acoes de outros mercados (ex: EUA via Alpha Vantage) nao foram implementadas — o foco atual e' pt-BR / B3.
+
+### Rotacao da watchlist de acoes
+
+149 tickers e' demais pra buscar todo dia (rate limit da Yahoo + ~5min de
+execucao). `watchlist.rotation` em `config/stocks.json` divide a lista em
+7 fatias (~22 cada) e cada execucao diaria (o timer do systemd ja roda
+1x/dia) busca so' a fatia do dia da semana atual — rodando todo dia, cada
+ticker acaba atualizado 1x por semana. Pra ver o quadro combinado mais
+recente de todos os 149 (nao so' a fatia de hoje), use:
+
+```bash
+python3 scripts/monitor.py --asset-class stocks --rolling-days 7 --top 30
+```
+
+Isso le do historico (SQLite) em vez de buscar ao vivo, pegando o registro
+mais recente de cada ticker dentro da janela pedida — cada linha mostra
+ha quantos dias aquele dado especifico foi buscado, nunca escondido.
 
 Rodar uma classe completa:
 

@@ -14,6 +14,7 @@ funcao aqui e registre em ADAPTERS. Veja docs/adding-asset-class.md.
 
 import csv
 import io
+import math
 import statistics
 import time
 from datetime import date, datetime
@@ -122,16 +123,33 @@ def _daily_returns(closes: list):
     return returns
 
 
+def _select_today_batch(tickers: list[str], rotation: dict) -> list[str]:
+    """Divide a watchlist em N fatias e devolve so a fatia do dia da semana
+    atual. Existe pra cobrir watchlists grandes demais pra rodar inteiras
+    todo dia (rate limit + tempo de execucao) -- rodando 1x/dia, cada
+    ticker acaba atualizado 1x a cada N dias. Pra ver o quadro combinando
+    todos os dias da semana (nao so a fatia de hoje), monitor.py tem a
+    flag --rolling-days, que le do historico em vez de buscar ao vivo."""
+    if not rotation or not rotation.get("enabled"):
+        return tickers
+    days_in_cycle = rotation.get("days_in_cycle", 7)
+    weekday = date.today().weekday()  # 0=segunda ... 6=domingo
+    batch_size = math.ceil(len(tickers) / days_in_cycle)
+    start = (weekday % days_in_cycle) * batch_size
+    return tickers[start : start + batch_size]
+
+
 def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
     source = config["source"]
     endpoint_template = source["endpoint"]
     watchlist = config.get("watchlist", {})
-    tickers = watchlist.get("tickers", [])
-    if not tickers:
+    all_tickers = watchlist.get("tickers", [])
+    if not all_tickers:
         raise RuntimeError(
             "watchlist.tickers esta vazio em config/stocks.json -- preencha com os "
             "tickers B3 que quer monitorar (ex: 'PETR4.SA') antes de rodar."
         )
+    tickers = _select_today_batch(all_tickers, watchlist.get("rotation", {}))
     benchmark_ticker = watchlist.get("benchmark_ticker", "^BVSP")
     history_range = watchlist.get("history_range", "3mo")
     request_interval = watchlist.get("request_interval_seconds", 1.5)
