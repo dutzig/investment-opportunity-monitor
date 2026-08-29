@@ -10,11 +10,12 @@
   },
   "watchlist": {
     "tickers": [
-      "CPTS11", "HGLG11", "HGRU11", "KFOF11", "KNCR11", "KNRI11",
-      "KNUQ11", "LVBI11", "PVBI11", "VGIP11", "VGIR11", "XPML11"
+      "MXRF11", "HGLG11", "KNRI11", "XPML11",
+      "VISC11", "HGRU11", "KNCR11", "BTLG11"
     ],
+    "local_override_path": "data/fiis_watchlist_local.json",
     "request_interval_seconds": 0.5,
-    "notes": "Os 12 FIIs da uma carteira de exemplo, exceto HGLG12 e HGRU12 -- esses sao 'Direito de subscricao' (instrumento temporario, preco R$0,00 na planilha), nao o fundo em si, entao nao fazem sentido no mesmo score. Edite livremente pra outros FIIs."
+    "notes": "Este repo e' publico -- 'tickers' aqui e' so' uma lista de exemplo (FIIs grandes e liquidos, sem vinculo com holdings especificos ou relatorio de terceiros). A watchlist de verdade (listas curadas de assinatura paga) deve ficar em data/fiis_watchlist_local.json (formato: {\"tickers\": [...]}), um arquivo local coberto pelo .gitignore que NUNCA vai pro git. Se esse arquivo existir, ele substitui 'tickers' inteiramente -- ver _resolve_watchlist_tickers() em fetch.py."
   },
   "record_fields": {
     "id_field": "ticker",
@@ -29,7 +30,7 @@
     ]
   },
   "filters": {
-    "notes": "Sem filtro por padrao -- a watchlist ja e' a watchlist de exemplo, curada manualmente."
+    "notes": "Sem filtro por padrao -- a watchlist ja e' curada manualmente (ver watchlist.notes)."
   },
   "risk_score": {
     "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre os FIIs desta watchlist",

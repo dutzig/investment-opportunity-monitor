@@ -33,6 +33,19 @@ def _get_path(record: dict, field: str):
     return record.get(field)
 
 
+def _get_numeric(record: dict, field: str):
+    """Como _get_path, mas devolve None pra qualquer valor nao-numerico --
+    protege contra o sentinela 'indisponivel' (string) que um score
+    anterior grava quando nao conseguiu calcular nada. Isso acontece
+    quando um output_field de uma chamada (ex: risk_score) vira input de
+    outra (ex: opportunity_score reaproveitando risk_score) e o registro
+    nao tinha nenhum componente disponivel na primeira passada."""
+    value = record.get(field)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return value
+
+
 def _transform_log10_minmax(value, dataset_values, _comp):
     if value is None or value <= 0:
         return None
@@ -106,7 +119,7 @@ def compute_scores(records: list[dict], score_config: dict, output_field: str = 
     dataset_cache = {}
     for comp in components:
         field = comp["field"]
-        dataset_cache[field] = [_get_path(r, field) for r in records]
+        dataset_cache[field] = [_get_numeric(r, field) for r in records]
 
     scored = []
     for record in records:
@@ -122,7 +135,7 @@ def compute_scores(records: list[dict], score_config: dict, output_field: str = 
             if transform_fn is None:
                 raise ValueError(f"Transform desconhecido no config: {transform_name}")
 
-            raw_value = _get_path(record, field)
+            raw_value = _get_numeric(record, field)
             if transform_name in ("categorical_rules", "relative_deviation_inverse"):
                 normalized = transform_fn(raw_value, dataset_cache[field], comp, record=record)
             else:

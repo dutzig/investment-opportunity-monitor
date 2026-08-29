@@ -14,13 +14,37 @@ funcao aqui e registre em ADAPTERS. Veja docs/adding-asset-class.md.
 
 import csv
 import io
+import json
 import math
 import os
 import statistics
 import time
 from datetime import date, datetime
+from pathlib import Path
 
 from net_client import fetch_json, fetch_text
+
+SKILL_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _resolve_watchlist_tickers(watchlist: dict) -> list[str]:
+    """Le a lista real de tickers de um arquivo local fora do git, se
+    'local_override_path' estiver configurado e o arquivo existir --
+    permite manter uma watchlist curada de terceiros (ex: relatorio pago
+    e licenciado) ou a composicao real da carteira do usuario fora do
+    repo publico. O config versionado no git sempre traz so uma lista
+    generica de exemplo em 'tickers'; a lista de verdade fica em
+    data/*.json (dir ja coberto pelo .gitignore)."""
+    override_path = watchlist.get("local_override_path")
+    if override_path:
+        full_path = SKILL_ROOT / override_path
+        if full_path.exists():
+            with open(full_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            tickers = data.get("tickers")
+            if tickers:
+                return tickers
+    return watchlist.get("tickers", [])
 
 
 def fetch_defillama_yields(config: dict, cache_ttl: int) -> list[dict]:
@@ -294,7 +318,7 @@ def fetch_bolsai_fii(config: dict, cache_ttl: int) -> list[dict]:
         )
 
     watchlist = config.get("watchlist", {})
-    tickers = watchlist.get("tickers", [])
+    tickers = _resolve_watchlist_tickers(watchlist)
     if not tickers:
         raise RuntimeError(
             "watchlist.tickers esta vazio em config/fiis.json -- preencha com os "
