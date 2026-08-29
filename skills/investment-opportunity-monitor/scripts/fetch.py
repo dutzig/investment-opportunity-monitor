@@ -140,6 +140,20 @@ def _select_today_batch(tickers: list[str], rotation: dict) -> list[str]:
     return tickers[start : start + batch_size]
 
 
+def _fetch_bolsai_fundamentals_one(ticker_plain: str, endpoint_template: str, api_key: str, cache_ttl: int):
+    """Busca fundamentos de UM ticker na bolsai. Devolve (dict, erro) --
+    nunca levanta excecao, pra nao derrubar o lote inteiro por causa de
+    um ticker sem cobertura fundamentalista (ex: BDR, units novas)."""
+    url = endpoint_template.format(ticker=ticker_plain)
+    try:
+        data = fetch_json(url, ttl_seconds=cache_ttl, headers={"X-API-Key": api_key}, timeout=20.0)
+    except RuntimeError as exc:
+        return None, str(exc)
+    if data.get("detail") or data.get("error"):
+        return None, data.get("detail") or data.get("message", "erro desconhecido")
+    return data, None
+
+
 def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
     source = config["source"]
     endpoint_template = source["endpoint"]
@@ -154,6 +168,18 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
     benchmark_ticker = watchlist.get("benchmark_ticker", "^BVSP")
     history_range = watchlist.get("history_range", "3mo")
     request_interval = watchlist.get("request_interval_seconds", 1.5)
+
+    fundamentals_source = config.get("fundamentals_source")
+    fundamentals_api_key = None
+    if fundamentals_source:
+        env_var = fundamentals_source.get("api_key_env_var", "BOLSAI_API_KEY")
+        fundamentals_api_key = os.environ.get(env_var)
+        if not fundamentals_api_key:
+            raise RuntimeError(
+                f"config tem 'fundamentals_source' mas a variavel de ambiente {env_var} "
+                f"nao esta definida. Pegue uma chave gratuita em usebolsai.com e exporte "
+                f"antes de rodar: export {env_var}=sua_chave_aqui"
+            )
 
     def fetch_chart(ticker: str):
         url = endpoint_template.format(ticker=ticker) + f"?range={history_range}&interval=1d"
@@ -216,20 +242,38 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
         valid_pairs = [(c, v) for c, v in zip(closes[-30:], volumes[-30:]) if c is not None and v is not None]
         avg_volume_brl = statistics.fmean(c * v for c, v in valid_pairs) if valid_pairs else None
 
-        records.append(
-            {
-                "ticker": ticker,
-                "shortName": meta.get("shortName"),
-                "regularMarketPrice": meta.get("regularMarketPrice"),
-                "regularMarketVolume": meta.get("regularMarketVolume"),
-                "currency": meta.get("currency"),
-                "fiftyTwoWeekHigh": meta.get("fiftyTwoWeekHigh"),
-                "fiftyTwoWeekLow": meta.get("fiftyTwoWeekLow"),
-                "volatility_30d": volatility_30d,
-                "beta": beta,
-                "avg_volume_brl": avg_volume_brl,
-            }
-        )
+        record = {
+            "ticker": ticker,
+            "shortName": meta.get("shortName"),
+            "regularMarketPrice": meta.get("regularMarketPrice"),
+            "regularMarketVolume": meta.get("regularMarketVolume"),
+            "currency": meta.get("currency"),
+            "fiftyTwoWeekHigh": meta.get("fiftyTwoWeekHigh"),
+            "fiftyTwoWeekLow": meta.get("fiftyTwoWeekLow"),
+            "volatility_30d": volatility_30d,
+            "beta": beta,
+            "avg_volume_brl": avg_volume_brl,
+        }
+
+        if fundamentals_source:
+            if i > 0 and request_interval:
+                time.sleep(request_interval)
+            ticker_plain = ticker.split(".")[0]  # bolsai usa 'PETR4', nao 'PETR4.SA'
+            fdata, ferror = _fetch_bolsai_fundamentals_one(
+                ticker_plain, fundamentals_source["endpoint"], fundamentals_api_key, cache_ttl
+            )
+            if fdata:
+                for key in (
+                    "pl", "pvp", "roe", "roa", "roic", "debt_equity", "net_debt_ebitda",
+                    "net_margin", "ebitda_margin", "cagr_revenue_5y", "cagr_earnings_5y",
+                    "market_cap",
+                ):
+                    if key in fdata:
+                        record[key] = fdata[key]
+            else:
+                record["_fundamentals_error"] = ferror
+
+        records.append(record)
 
     return records
 

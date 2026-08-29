@@ -5,7 +5,14 @@
     "type": "yahoo_finance_chart",
     "endpoint": "https://query1.finance.yahoo.com/v8/finance/chart/{ticker}",
     "requires_api_key": false,
-    "notes": "Endpoint nao documentado oficialmente pela Yahoo (o mesmo que o pacote yfinance usa por baixo), mas estavel e amplamente utilizado. Validado manualmente em 2026-08-29 para tickers .SA (B3) e para o indice ^BVSP (Ibovespa), sem precisar de User-Agent especial."
+    "notes": "Endpoint nao documentado oficialmente pela Yahoo (o mesmo que o pacote yfinance usa por baixo), mas estavel e amplamente utilizado. Validado manualmente em 2026-08-29 para tickers .SA (B3) e para o indice ^BVSP (Ibovespa), sem precisar de User-Agent especial. So' da' preco/volume -- risco de MERCADO (volatilidade, beta, liquidez)."
+  },
+  "fundamentals_source": {
+    "type": "bolsai_fundamentals",
+    "endpoint": "https://api.usebolsai.com/api/v1/fundamentals/{ticker}",
+    "requires_api_key": true,
+    "api_key_env_var": "BOLSAI_API_KEY",
+    "notes": "27 indicadores fundamentalistas reais (P/L, P/VP, ROE, ROA, ROIC, divida/EBITDA, margens, CAGR 5 anos) -- risco do NEGOCIO em si, complementar ao source acima (que so' mede risco de mercado). Mesma chave gratuita da classe fiis (usebolsai.com), nunca no config. Buscado SEMPRE na mesma fatia diaria da watchlist.rotation abaixo -- nao busca fundamentos de tudo de uma vez mesmo a bolsai aguentando (200 req/dia > 149 tickers), porque isso deixaria fundamento fresco emparelhado com preco/volatilidade velha (ate 6 dias) pra maior parte dos tickers no mesmo registro. Ficando na mesma fatia, cada snapshot diario tem as duas dimensoes coerentes no mesmo dia."
   },
   "watchlist": {
     "tickers": [
@@ -54,42 +61,84 @@
       {"field": "regularMarketPrice", "label": "preco_r$", "width": 9, "decimals": 2},
       {"field": "volatility_30d", "label": "vol30d%", "width": 8, "decimals": 1},
       {"field": "beta", "label": "beta", "width": 6, "decimals": 2},
+      {"field": "debt_equity", "label": "div/pl", "width": 7, "decimals": 2},
+      {"field": "roe", "label": "roe%", "width": 7, "decimals": 1},
       {"field": "avg_volume_brl", "label": "vol_r$_dia", "width": 15, "decimals": 0, "thousands": true}
     ]
   },
   "filters": {
-    "notes": "Sem filtro por padrao -- a watchlist ja e' curada manualmente. Se algum ticker vier com erro (_fetch_error), ele simplesmente fica sem os campos numericos e o risk_score marca como indisponivel, sem ser descartado silenciosamente."
+    "notes": "Sem filtro por padrao -- a watchlist ja e' curada manualmente. Se algum ticker vier com erro (_fetch_error ou _fundamentals_error), ele simplesmente fica sem os campos correspondentes e o risk_score marca como indisponivel, sem ser descartado silenciosamente."
   },
   "risk_score": {
     "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre os tickers desta watchlist",
-    "methodology": "Media ponderada de 3 componentes calculados a partir do historico de precos real (Yahoo Finance, janela definida em watchlist.history_range). NAO captura risco de governanca, setorial ou de evento especifico da empresa -- so risco estatistico de mercado (volatilidade, sensibilidade ao indice, liquidez). NAO e recomendacao de investimento.",
+    "methodology": "Media ponderada de 5 componentes vindos de DUAS fontes reais: risco de MERCADO (Yahoo Finance -- volatilidade, beta, liquidez) e risco do NEGOCIO (bolsai -- endividamento, capacidade de pagar divida com caixa operacional). Isso e' mais completo que so' olhar preco: uma acao pode ser pouco volatil e ainda assim ter uma empresa endividada por tras. NAO captura risco de governanca nem qualidade especifica de gestao. NAO e recomendacao de investimento.",
     "missing_field_penalty_points": 5,
-    "missing_field_penalty_notes": "Mesma politica de config/defi.json e config/fixed-income.json: desconta 5 pontos por componente ausente (ex: ticker novo demais pra ter 30 dias de historico), alem de redistribuir peso.",
+    "missing_field_penalty_notes": "Mesma politica das outras classes: desconta 5 pontos por componente ausente (ex: ticker novo demais pra ter 30 dias de historico, ou sem cobertura fundamentalista na bolsai -- BDRs e units novas por exemplo), alem de redistribuir peso.",
     "components": [
       {
         "field": "volatility_30d",
         "label": "Volatilidade anualizada (30 dias, %)",
-        "weight": 0.40,
+        "weight": 0.25,
         "transform": "minmax_capped",
         "cap": 80,
         "invert": true,
-        "notes": "Desvio padrao dos retornos diarios dos ultimos 30 pregoes, anualizado (x sqrt(252)) e em %. Capado em 80% ao ano (acima disso e' tratado como risco maximo nesse componente). invert=true porque volatilidade MAIOR significa MAIS risco, entao o normalizado e' invertido."
+        "notes": "Desvio padrao dos retornos diarios dos ultimos 30 pregoes, anualizado (x sqrt(252)) e em %. Capado em 80% ao ano. invert=true porque volatilidade MAIOR significa MAIS risco."
       },
       {
         "field": "beta",
         "label": "Beta vs Ibovespa (magnitude)",
-        "weight": 0.30,
+        "weight": 0.20,
         "transform": "abs_minmax_capped",
         "cap": 2.0,
         "invert": true,
-        "notes": "Beta calculado via covariancia dos retornos diarios da acao com o Ibovespa (^BVSP) dividida pela variancia do Ibovespa, na mesma janela. Usa abs(beta) porque tanto um beta bem negativo quanto bem positivo indicam mais sensibilidade ao mercado do que um beta perto de zero -- nao e' so 'beta alto e' ruim'. invert=true porque magnitude MAIOR = MAIS risco sistemico relativo."
+        "notes": "Covariancia dos retornos diarios com o Ibovespa dividida pela variancia do Ibovespa. Usa abs(beta) porque tanto beta bem negativo quanto bem positivo indicam mais sensibilidade ao mercado. invert=true porque magnitude MAIOR = MAIS risco sistemico."
       },
       {
         "field": "avg_volume_brl",
         "label": "Liquidez media (R$/dia, 30 pregoes)",
-        "weight": 0.30,
+        "weight": 0.20,
         "transform": "log10_minmax",
-        "notes": "Media do volume financeiro diario (fechamento x volume em numero de acoes) dos ultimos 30 pregoes. Log-escala porque a liquidez varia em ordens de grandeza entre blue chips e papeis menores. Liquidez maior = mais facil sair da posicao a um bom preco = menos risco relativo."
+        "notes": "Media do volume financeiro diario dos ultimos 30 pregoes. Log-escala porque varia em ordens de grandeza entre blue chips e papeis menores. Liquidez maior = menos risco relativo de sair da posicao."
+      },
+      {
+        "field": "debt_equity",
+        "label": "Divida / Patrimonio Liquido",
+        "weight": 0.20,
+        "transform": "minmax_capped",
+        "cap": 3.0,
+        "invert": true,
+        "notes": "Fundamental real (bolsai). Divida total sobre patrimonio liquido -- quanto maior, mais alavancada a empresa. Capado em 3,0x (acima disso, risco maximo nesse componente). invert=true: divida maior = mais risco."
+      },
+      {
+        "field": "net_debt_ebitda",
+        "label": "Divida Liquida / EBITDA (anos pra quitar com caixa operacional)",
+        "weight": 0.15,
+        "transform": "minmax_capped",
+        "cap": 5.0,
+        "invert": true,
+        "notes": "Fundamental real (bolsai). Quantos anos de EBITDA a empresa levaria pra quitar a divida liquida -- padrao de mercado pra medir capacidade de pagamento. Valor negativo (caixa liquido positivo) e' automaticamente tratado como o melhor caso pelo transform (clampa em 0 antes de inverter). Capado em 5 anos."
+      }
+    ]
+  },
+  "opportunity_score": {
+    "scale": "0 (oportunidade fraca) a 100 (oportunidade forte), relativo apenas entre os tickers desta consulta",
+    "methodology": "Combina rentabilidade sobre patrimonio (ROE, fundamental real da bolsai) com o risk_score ja calculado -- mesmo motor generico reaproveitado (score.py), mesmo padrao usado em DeFi e FII. ROE alto sozinho nao e' garantia de nada (pode vir de alavancagem agressiva, nao so' de eficiencia) -- por isso e' balanceado contra o risk_score, que ja penaliza divida alta. NAO e recomendacao de investimento.",
+    "components": [
+      {
+        "field": "roe",
+        "label": "ROE (retorno sobre patrimonio, %)",
+        "weight": 0.50,
+        "transform": "minmax_capped",
+        "cap": 40,
+        "notes": "ROE acima de 40% e' tratado como maximo nesse componente (raro e geralmente reflete estrutura de capital atipica, nao necessariamente 'melhor')."
+      },
+      {
+        "field": "risk_score",
+        "label": "Risco (risk_score ja calculado, 0-100)",
+        "weight": 0.50,
+        "transform": "minmax_capped",
+        "cap": 100,
+        "notes": "Reaproveita o risk_score como componente 0-1 (valor/100), mesmo padrao usado nos outros opportunity_score da skill."
       }
     ]
   },
