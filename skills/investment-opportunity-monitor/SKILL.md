@@ -93,6 +93,26 @@ que ja tem `risk_score`, com um componente lendo o proprio `risk_score`
 "quao arriscado" e "quao boa e a oportunidade dado o risco" ficam em dois
 numeros separados, sem misturar tudo numa unica nota nem duplicar codigo.
 
+## Detectores de sinal (além do score por ativo)
+
+Além do `monitor.py` (score por ativo individual), existem scripts que
+comparam ativos ENTRE SI pra achar assimetrias — primeiro exemplo:
+
+```bash
+python3 scripts/lending_asymmetry.py
+```
+
+Compara a taxa de supply do mesmo ativo (ex: USDC) entre vários mercados de
+lending conhecidos (`config/lending-rate-asymmetry.json`), separando spread
+**na mesma chain** (só risco de contrato/protocolo) de spread **cross-chain**
+(soma risco de ponte, tempo e custo — sinalizado explicitamente, nunca
+escondido no número). Não persiste histórico ainda (fica pra quando fizer
+sentido acompanhar tendência desse sinal específico). O borrow-rate real
+(pra estratégia de "pega emprestado barato aqui, deposita caro ali") não
+está disponível de graça na DefiLlama (`/poolsBorrow` é pago, HTTP 402
+confirmado) — uma v2 desse detector precisaria ler direto on-chain via RPC
+público, sem key, só leitura.
+
 ## Como adicionar uma nova classe de ativo
 
 Nao mexa em `monitor.py` nem em `score.py`. Siga

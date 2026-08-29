@@ -1,0 +1,30 @@
+{
+  "signal_type": "lending_rate_asymmetry",
+  "display_name": "Assimetria de taxa — lending markets (supply-side)",
+  "source": {
+    "type": "defillama_yields",
+    "endpoint": "https://yields.llama.fi/pools",
+    "requires_api_key": false,
+    "notes": "Mesmo endpoint publico ja usado por config/defi.json. So o supply-side APY esta disponivel de graca -- o endpoint de borrow rate da DefiLlama (/poolsBorrow) e' pago (HTTP 402, validado em 2026-08-29). Por isso este detector compara taxa de SUPPLY do mesmo ativo entre mercados, nao 'pegue emprestado barato aqui, deposite caro ali' (isso exigiria borrow APY, que ficaria pra uma v2 lendo direto on-chain via RPC publico)."
+  },
+  "known_lending_protocols": [
+    "aave-v3", "aave-v2", "compound-v3", "compound", "morpho-blue",
+    "spark", "venus-core-pool", "radiant-v2", "euler-v2",
+    "fluid-lending", "sky-lending", "maple"
+  ],
+  "known_lending_protocols_notes": "Curada manualmente (a API /pools nao tem um campo 'category'). Adicione outros slugs de protocolo de lending aqui se quiser cobrir mais -- sem tocar no script.",
+  "filters": {
+    "min_tvl_usd": 1000000,
+    "min_apy": 0.05,
+    "exclude_outlier": true,
+    "exposure": "single",
+    "notes": "min_apy exclui entradas com APY ~0 (comuns em mercados que so servem pra colateral/borrow, sem incentivo de supply -- nao sao 'oportunidade' nenhuma, so ruido). exposure=single exclui LPs (isso e' sobre lending puro, nao liquidity pool)."
+  },
+  "grouping": {
+    "group_by_field": "symbol",
+    "min_venues": 2,
+    "min_spread_pp": 1.5,
+    "notes": "Agrupa por simbolo exato do ativo (ex: 'USDC'). NAO normaliza variantes tipo 'USDC.e' ou 'USDC bridged' como o mesmo ativo -- isso e' proposital, sao ativos diferentes com risco de ponte diferente."
+  },
+  "methodology": "Para cada ativo com 2+ mercados de lending conhecidos, mostra o spread entre a maior e a menor taxa de supply. Separa em duas categorias: MESMA CHAIN (mesmo ativo, protocolos diferentes na mesma rede -- a diferenca de risco entre as pontas e' basicamente risco de contrato/protocolo) e CHAINS DIFERENTES (soma risco de ponte, tempo e custo de transferencia, e o ativo 'mesmo nome' pode nem ser fungivel 1:1 entre chains sem passar por uma ponte especifica). NAO e recomendacao de investimento -- e um mapa de onde a taxa diverge e por que, pra voce decidir se a diferenca compensa o risco extra de mover capital."
+}
