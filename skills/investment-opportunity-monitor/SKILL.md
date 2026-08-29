@@ -33,6 +33,16 @@ Rodar e obter JSON (para consumir em outro processo, ex: agendamento):
 python3 scripts/monitor.py --asset-class defi --top 15 --json
 ```
 
+Quando o config da classe define um bloco `opportunity_score` (DeFi já
+define), o CLI calcula os dois números por ativo — `risk_score` (quão
+arriscado, isolado) e `opportunity_score` (yield ajustado pelo risco) — e
+`--rank-by opportunity_score` reordena o top N por oportunidade em vez de
+risco:
+
+```bash
+python3 scripts/monitor.py --asset-class defi --top 15 --rank-by opportunity_score
+```
+
 Toda execucao grava um snapshot com timestamp no historico SQLite da classe
 (`data/<classe>_history.db`) a menos que `--no-history` seja passado. Isso
 permite consultar tendencia (o score de uma pool subindo/caindo ao longo do
@@ -58,15 +68,25 @@ skill nao faz isso e pare — nao tente contornar via outro caminho.
 
 ## Como o score funciona
 
-O motor de score (`scripts/score.py`) e generico: le a lista `components`
-do bloco `risk_score` do config da classe, aplica um `transform` conhecido
-em cada campo (`log10_minmax`, `minmax_capped`, `categorical_rules`,
+O motor de score (`scripts/score.py`, funcao `compute_scores`) e generico:
+le a lista `components` de um bloco de config (`risk_score` ou
+`opportunity_score`), aplica um `transform` conhecido em cada campo
+(`log10_minmax`, `minmax_capped`, `categorical_rules`,
 `relative_deviation_inverse`), combina os resultados numa media ponderada
 0-100, e redistribui o peso automaticamente quando um componente nao pode
-ser calculado por falta de dado. A formula completa, os pesos e o *porque*
+ser calculado por falta de dado. Se o bloco definir
+`missing_field_penalty_points`, tambem desconta esses pontos do score
+final por componente ausente (sinaliza "menos confianca", em vez de so
+redistribuir silenciosamente). A formula completa, os pesos e o *porque*
 de cada componente estao documentados dentro do proprio JSON (campos
 `methodology` e `notes`) — leia `config/defi.json` para o exemplo completo
 antes de explicar o score ao usuario ou de ajustar pesos.
+
+`opportunity_score` roda a mesma funcao uma segunda vez sobre os records
+que ja tem `risk_score`, com um componente lendo o proprio `risk_score`
+(via `minmax_capped` com `cap: 100`) combinado com o yield — assim
+"quao arriscado" e "quao boa e a oportunidade dado o risco" ficam em dois
+numeros separados, sem misturar tudo numa unica nota nem duplicar codigo.
 
 ## Como adicionar uma nova classe de ativo
 

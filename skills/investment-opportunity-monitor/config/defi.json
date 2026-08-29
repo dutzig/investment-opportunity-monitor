@@ -25,6 +25,8 @@
     "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre pools de DeFi retornadas nesta mesma consulta",
     "methodology": "Media ponderada de 4 componentes normalizados 0-1. NAO e recomendacao de investimento: e um indicador comparativo calculado exclusivamente a partir de dados publicos de TVL, historico de dados da pool, tipo de exposicao ao ativo e estabilidade do APY. Risco de smart contract, de governanca e regulatorio NAO sao capturados por este score.",
     "missing_field_policy": "exclude_and_renormalize",
+    "missing_field_penalty_points": 5,
+    "missing_field_penalty_notes": "Alem de redistribuir o peso entre os componentes disponiveis, desconta 5 pontos do score final por componente ausente -- sinaliza 'menos confianca' quando o score foi calculado com dado incompleto, em vez de tratar ausencia como neutra.",
     "components": [
       {
         "field": "tvlUsd",
@@ -66,6 +68,27 @@
         "reference_field": "apyMean30d",
         "cap_deviation": 1.0,
         "notes": "Desvio relativo grande entre o APY atual e a media de 30 dias sugere yield inflado artificialmente ou incentivo temporario prestes a acabar. Se apyMean30d vier nulo, o componente e marcado indisponivel e o peso e redistribuido."
+      }
+    ]
+  },
+  "opportunity_score": {
+    "scale": "0 (oportunidade fraca) a 100 (oportunidade forte), relativo apenas entre pools desta mesma consulta",
+    "methodology": "NAO substitui o risk_score -- e um segundo indicador, calculado pelo mesmo motor generico (scripts/score.py), que combina o APY observado com o risk_score que acabou de ser calculado. Existe pra separar 'quao arriscado' de 'quao boa e a oportunidade dado o risco', sem misturar os dois numa unica nota. Continua sendo so um indicador comparativo -- NAO e recomendacao de investimento.",
+    "components": [
+      {
+        "field": "apy",
+        "label": "Yield (APY %)",
+        "weight": 0.55,
+        "transform": "log10_minmax",
+        "notes": "Log-escala porque a distribuicao de APY em DeFi e' muito assimetrica (poucas pools com APY extremo puxariam uma escala linear). Peso maior que o risco porque o objetivo aqui e' achar oportunidade, nao repetir o risk_score."
+      },
+      {
+        "field": "risk_score",
+        "label": "Risco (risk_score já calculado, 0-100)",
+        "weight": 0.45,
+        "transform": "minmax_capped",
+        "cap": 100,
+        "notes": "Reaproveita o risk_score (0-100) como um componente de 0-1 (valor/100) via o mesmo transform 'minmax_capped' usado para outros campos limitados por um teto -- nao precisa de um transform novo. Isso 'puxa pra baixo' a nota de oportunidade de pools com yield alto mas risco tambem alto."
       }
     ]
   },

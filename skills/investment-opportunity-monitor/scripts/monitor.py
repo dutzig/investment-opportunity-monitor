@@ -85,27 +85,34 @@ def apply_filters(records: list[dict], filters: dict) -> list[dict]:
     return out
 
 
-def print_table(records: list[dict], config: dict, top: int) -> None:
+def _rank_value(record: dict, field: str):
+    v = record.get(field)
+    return v if isinstance(v, (int, float)) else -1
+
+
+def print_table(records: list[dict], config: dict, top: int, rank_by: str) -> None:
     fields = config["record_fields"]
     name_field = fields.get("name_field")
     protocol_field = fields.get("protocol_field") or fields.get("type_field")
     chain_field = fields.get("chain_field")
     yield_field = fields.get("yield_field")
     tvl_field = fields.get("tvl_field")
+    has_opportunity = "opportunity_score" in config
 
-    ranked = sorted(
-        records,
-        key=lambda r: (r["risk_score"] if isinstance(r["risk_score"], (int, float)) else -1),
-        reverse=True,
-    )[:top]
+    ranked = sorted(records, key=lambda r: _rank_value(r, rank_by), reverse=True)[:top]
 
-    print(f"\n{config['display_name']} — top {len(ranked)} por risk_score (dados reais, {config['source']['endpoint']})\n")
-    header = f"{'score':>6}  {'apy%':>7}  {'tvl_usd':>15}  {'chain':<10}  {'protocolo':<18}  ativo"
+    print(f"\n{config['display_name']} — top {len(ranked)} por {rank_by} (dados reais, {config['source']['endpoint']})\n")
+    opp_col = f"{'oport.':>6}  " if has_opportunity else ""
+    header = f"{'risco':>6}  {opp_col}{'apy%':>7}  {'tvl_usd':>15}  {'chain':<10}  {'protocolo':<18}  ativo"
     print(header)
     print("-" * len(header))
     for r in ranked:
         score = r["risk_score"]
         score_str = f"{score:>6.1f}" if isinstance(score, (int, float)) else f"{'N/D':>6}"
+        opp_str = ""
+        if has_opportunity:
+            opp = r.get("opportunity_score")
+            opp_str = (f"{opp:>6.1f}  " if isinstance(opp, (int, float)) else f"{'N/D':>6}  ")
         apy = r.get(yield_field)
         apy_str = f"{apy:>7.2f}" if isinstance(apy, (int, float)) else f"{'N/D':>7}"
         tvl = r.get(tvl_field)
@@ -113,9 +120,10 @@ def print_table(records: list[dict], config: dict, top: int) -> None:
         chain = str(r.get(chain_field, ""))[:10]
         protocol = str(r.get(protocol_field, ""))[:18]
         name = str(r.get(name_field, ""))
-        print(f"{score_str}  {apy_str}  {tvl_str}  {chain:<10}  {protocol:<18}  {name}")
-        if r["_missing_components"]:
-            print(f"        (indisponivel: {', '.join(r['_missing_components'])})")
+        print(f"{score_str}  {opp_str}{apy_str}  {tvl_str}  {chain:<10}  {protocol:<18}  {name}")
+        missing = r.get("_risk_score_missing_components") or []
+        if missing:
+            print(f"        (risco calculado sem: {', '.join(missing)})")
 
 
 def main():
@@ -125,13 +133,20 @@ def main():
     parser.add_argument("--cache-ttl", type=int, default=300, help="segundos de cache do fetch (0 = sem cache)")
     parser.add_argument("--no-history", action="store_true", help="nao grava snapshot no historico")
     parser.add_argument("--json", action="store_true", help="imprime JSON em vez de tabela")
+    parser.add_argument(
+        "--rank-by",
+        default="risk_score",
+        help="campo pra ordenar/cortar o top N (ex: risk_score, opportunity_score se a classe tiver esse bloco)",
+    )
     args = parser.parse_args()
 
     config = load_config(args.asset_class)
 
     raw_records = fetch_records(config, cache_ttl=args.cache_ttl)
     filtered = apply_filters(raw_records, config.get("filters", {}))
-    scored = compute_scores(filtered, config["risk_score"])
+    scored = compute_scores(filtered, config["risk_score"], output_field="risk_score")
+    if "opportunity_score" in config:
+        scored = compute_scores(scored, config["opportunity_score"], output_field="opportunity_score")
 
     if not args.no_history:
         db_path = save_snapshot(scored, config)
@@ -139,14 +154,10 @@ def main():
             print(f"[historico salvo em {db_path}]", file=sys.stderr)
 
     if args.json:
-        ranked = sorted(
-            scored,
-            key=lambda r: (r["risk_score"] if isinstance(r["risk_score"], (int, float)) else -1),
-            reverse=True,
-        )[: args.top]
+        ranked = sorted(scored, key=lambda r: _rank_value(r, args.rank_by), reverse=True)[: args.top]
         print(json.dumps(ranked, ensure_ascii=False, indent=2, default=str))
     else:
-        print_table(scored, config, args.top)
+        print_table(scored, config, args.top, args.rank_by)
         print(
             "\nLembrete: este score e um indicador comparativo calculado a partir de "
             "dados publicos, NAO e recomendacao de investimento. A decisao e sua.",

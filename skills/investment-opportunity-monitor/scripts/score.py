@@ -1,17 +1,24 @@
-"""Motor de score de risco generico, dirigido por config.
+"""Motor de score generico, dirigido por config.
 
 Nenhuma logica especifica de classe de ativo vive aqui -- os componentes,
-pesos e regras vem inteiramente do bloco 'risk_score' do config JSON da
-classe (config/defi.json, config/stocks.json, etc). Para adicionar uma
-classe nova sem tocar neste arquivo, basta descrever o score dela usando os
-tipos de transform ja suportados abaixo.
+pesos e regras vem inteiramente de um bloco de config (ex: 'risk_score' ou
+'opportunity_score' do config JSON da classe). compute_scores() e chamado
+uma vez por bloco de score que a classe define, escrevendo o resultado no
+campo indicado por output_field -- e' assim que o opportunity_score de
+DeFi reaproveita este mesmo motor: roda depois do risk_score, com um
+componente lendo o campo 'risk_score' que a primeira chamada acabou de
+calcular (transform 'minmax_capped' com cap=100 normaliza 0-100 pra 0-1).
 
 Politica de dado faltante: se um componente nao pode ser calculado (campo
-ausente no record, ou referencia nula), ele e excluido do calculo daquela
-pool/ativo especifica e o peso e redistribuido entre os componentes que
-sobraram (missing_field_policy = exclude_and_renormalize). O record final
-carrega '_missing_components' listando o que faltou, para transparencia.
-Nunca se inventa um valor no lugar de um dado ausente.
+ausente no record, ou referencia nula), ele e excluido do calculo daquele
+registro e o peso e redistribuido entre os componentes que sobraram
+(media ponderada so com o que esta disponivel). Alem disso, se o bloco de
+config definir 'missing_field_penalty_points', esse valor e' descontado do
+score final por componente ausente -- um jeito explicito de sinalizar
+'menos confianca' num score calculado com dado incompleto, em vez de so
+redistribuir silenciosamente o peso. O record final carrega
+'_<output_field>_missing_components' listando o que faltou, para
+transparencia. Nunca se inventa um valor no lugar de um dado ausente.
 """
 
 import math
@@ -73,8 +80,9 @@ TRANSFORMS = {
 }
 
 
-def compute_scores(records: list[dict], risk_score_config: dict) -> list[dict]:
-    components = risk_score_config["components"]
+def compute_scores(records: list[dict], score_config: dict, output_field: str = "risk_score") -> list[dict]:
+    components = score_config["components"]
+    penalty_per_missing = score_config.get("missing_field_penalty_points", 0)
 
     dataset_cache = {}
     for comp in components:
@@ -110,12 +118,18 @@ def compute_scores(records: list[dict], risk_score_config: dict) -> list[dict]:
             total_weight_used += weight
             breakdown[comp.get("label", field)] = round(normalized * 100, 1)
 
-        risk_score = round((weighted_sum / total_weight_used) * 100, 1) if total_weight_used > 0 else None
+        if total_weight_used > 0:
+            final_score = (weighted_sum / total_weight_used) * 100
+            if missing and penalty_per_missing:
+                final_score = max(0.0, final_score - penalty_per_missing * len(missing))
+            final_score = round(final_score, 1)
+        else:
+            final_score = None
 
         record_out = dict(record)
-        record_out["risk_score"] = risk_score if risk_score is not None else "indisponivel"
-        record_out["_score_breakdown"] = breakdown
-        record_out["_missing_components"] = missing
+        record_out[output_field] = final_score if final_score is not None else "indisponivel"
+        record_out[f"_{output_field}_breakdown"] = breakdown
+        record_out[f"_{output_field}_missing_components"] = missing
         scored.append(record_out)
 
     return scored
