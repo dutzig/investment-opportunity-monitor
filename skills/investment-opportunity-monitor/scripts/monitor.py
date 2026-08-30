@@ -19,6 +19,7 @@ risco comparativo, transparente e documentado no proprio config.
 import argparse
 import json
 import sys
+import urllib.parse
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -28,8 +29,24 @@ CONFIG_DIR = SKILL_ROOT / "config"
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from fetch import fetch_records  # noqa: E402
+from net_client import get_rate_limit_status  # noqa: E402
 from score import compute_scores  # noqa: E402
 from storage import save_snapshot, load_latest_per_id  # noqa: E402
+
+
+def _api_key_hosts(config: dict) -> list[str]:
+    """Hosts que exigem chave de API nesta config (ex: bolsai), pra checar
+    cota restante depois da busca. Cobre tanto 'source' quanto
+    'fundamentals_source' (acoes usa os dois -- Yahoo sem chave + bolsai
+    com chave)."""
+    hosts = []
+    for key in ("source", "fundamentals_source"):
+        src = config.get(key)
+        if src and src.get("requires_api_key"):
+            host = urllib.parse.urlparse(src.get("endpoint", "")).netloc
+            if host and host not in hosts:
+                hosts.append(host)
+    return hosts
 
 
 def load_config(asset_class: str) -> dict:
@@ -181,6 +198,11 @@ def main():
             db_path = save_snapshot(scored, config)
             if not args.json:
                 print(f"[historico salvo em {db_path}]", file=sys.stderr)
+
+        for host in _api_key_hosts(config):
+            status = get_rate_limit_status(host)
+            if status:
+                print(f"[{host}: {status['remaining']} requisicoes restantes hoje]", file=sys.stderr)
 
     if args.json:
         ranked = sorted(scored, key=lambda r: _rank_value(r, args.rank_by), reverse=True)[: args.top]
