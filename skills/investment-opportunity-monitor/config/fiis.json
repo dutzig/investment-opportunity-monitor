@@ -10,12 +10,26 @@
   },
   "watchlist": {
     "tickers": [
-      "MXRF11", "HGLG11", "KNRI11", "XPML11",
-      "VISC11", "HGRU11", "KNCR11", "BTLG11"
+      "AFHI11", "ALZR11", "AZPL11", "BBIG11", "BCIA11", "BCRI11", "BPML11",
+      "BRCO11", "BRCR11", "BROF11", "BTAL11", "BTCI11", "BTHF11", "BTLG11",
+      "CACR11", "CLIN11", "CPSH11", "CPTS11", "CYCR11", "DEVA11", "FATN11",
+      "GARE11", "GGRC11", "GTWR11", "GZIT11", "HABT11", "HCTR11", "HFOF11",
+      "HGBS11", "HGCR11", "HGLG11", "HGRE11", "HGRU11", "HSAF11", "HSLG11",
+      "HSML11", "HTMX11", "ICRI11", "IRIM11", "ITRI11", "JSAF11", "JSRE11",
+      "KCRE11", "KFOF11", "KISU11", "KIVO11", "KNCR11", "KNHF11", "KNHY11",
+      "KNIP11", "KNRI11", "KNSC11", "KNUQ11", "KORE11", "LIFE11", "LVBI11",
+      "MANA11", "MCCI11", "MCRE11", "MFII11", "MXRF11", "OUJP11", "PCIP11",
+      "PMLL11", "PORD11", "PSEC11", "PVBI11", "RBFM11", "RBRL11", "RBRP11",
+      "RBRR11", "RBRX11", "RBRY11", "RBVA11", "RCRB11", "RECR11", "RPRI11",
+      "RZAK11", "RZAT11", "RZTR11", "SNCI11", "SNEL11", "SNFF11", "SPXS11",
+      "TEPP11", "TGAR11", "TOPP11", "TRBL11", "TRXF11", "TVRI11", "URPR11",
+      "VCJR11", "VGHF11", "VGIP11", "VGIR11", "VGRI11", "VILG11", "VINO11",
+      "VISC11", "VRTA11", "VRTM11", "WHGR11", "XPCI11", "XPLG11", "XPML11",
+      "XPSF11"
     ],
     "local_override_path": "data/fiis_watchlist_local.json",
     "request_interval_seconds": 0.5,
-    "notes": "Este repo e' publico -- 'tickers' aqui e' so' uma lista de exemplo (FIIs grandes e liquidos, sem vinculo com holdings especificos ou relatorio de terceiros). A watchlist de verdade (listas curadas de assinatura paga) deve ficar em data/fiis_watchlist_local.json (formato: {\"tickers\": [...]}), um arquivo local coberto pelo .gitignore que NUNCA vai pro git. Se esse arquivo existir, ele substitui 'tickers' inteiramente -- ver _resolve_watchlist_tickers() em fetch.py."
+    "notes": "Composicao oficial do indice IFIX da B3 (106 FIIs), obtida direto da API publica da B3 (sistemaswebb3-listados.b3.com.br/indexProxy/indexCall/GetPortfolioDay, mesmo endpoint usado pra Ibovespa/SMLL em acoes) em 31/08/2026. Dado 100% publico, sem vinculo com nenhuma holdings pessoais ou relatorio de assinatura -- e' o indice oficial de fundos imobiliarios da bolsa. 'local_override_path' continua disponivel (ver _resolve_watchlist_tickers() em fetch.py) caso um dia se queira substituir por uma lista propria em data/fiis_watchlist_local.json (fora do git), mas por padrao nao ha arquivo la' e o IFIX inteiro e' usado."
   },
   "record_fields": {
     "id_field": "ticker",
@@ -30,7 +44,7 @@
     ]
   },
   "filters": {
-    "notes": "Sem filtro por padrao -- a watchlist ja e' curada manualmente (ver watchlist.notes)."
+    "notes": "Sem filtro por padrao -- a watchlist ja e' o indice IFIX inteiro (ver watchlist.notes)."
   },
   "risk_score": {
     "scale": "0 (risco mais alto) a 100 (risco mais baixo), relativo apenas entre os FIIs desta watchlist",
