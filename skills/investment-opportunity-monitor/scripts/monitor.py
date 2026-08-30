@@ -189,6 +189,15 @@ def main():
             )
     else:
         raw_records = fetch_records(config, cache_ttl=args.cache_ttl)
+        if not raw_records:
+            has_window = bool(config.get("watchlist", {}).get("overnight_window", {}).get("enabled"))
+            reason = (
+                "provavelmente fora da janela overnight configurada em watchlist.overnight_window"
+                if has_window
+                else "fonte nao retornou nenhum registro -- vale conferir se e' um problema real"
+            )
+            print(f"[nenhum registro buscado -- {reason}, nao gravou snapshot]", file=sys.stderr)
+            return
         filtered = apply_filters(raw_records, config.get("filters", {}))
         scored = compute_scores(filtered, config["risk_score"], output_field="risk_score")
         if "opportunity_score" in config:

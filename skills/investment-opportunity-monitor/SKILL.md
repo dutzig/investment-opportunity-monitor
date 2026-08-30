@@ -24,17 +24,33 @@ Classes disponiveis hoje (todas completas e testadas contra a fonte real):
 
 Acoes de outros mercados (ex: EUA via Alpha Vantage) nao foram implementadas — o foco atual e' pt-BR / B3.
 
-### Rotacao da watchlist de acoes
+### Janela overnight + lotes da watchlist de acoes
 
-149 tickers e' demais pra buscar todo dia (rate limit da Yahoo + ~5min de
-execucao). `watchlist.rotation` em `config/stocks.json` divide a lista em
-7 fatias (~22 cada) e cada execucao diaria (o timer do systemd ja roda
-1x/dia) busca so' a fatia do dia da semana atual — rodando todo dia, cada
-ticker acaba atualizado 1x por semana. Pra ver o quadro combinado mais
-recente de todos os 149 (nao so' a fatia de hoje), use:
+O universo inteiro (151 tickers hoje) e' grande demais pra buscar de uma
+vez sem arriscar rate limit do Yahoo (sensibilidade a rajada, nao um
+limite diario documentado). Duas configs em `config/stocks.json`
+resolvem isso juntas:
+
+- `watchlist.overnight_window`: so' busca fora do pregao da B3 (22:00 as
+  11:30 UTC = ~19h as ~08h30 BRT), pra sempre pegar o candle de
+  fechamento definitivo em vez de preco no meio do dia. Fora da janela,
+  o adapter devolve lista vazia (nao e' erro) e nao grava snapshot.
+- `watchlist.batch`: dentro da janela, um cursor persistido em disco
+  (`data/stocks_batch_cursor.json`) avança 20 tickers por execucao e da'
+  a volta quando chega no fim. Rodando a cada 30min (timer do systemd),
+  cobre o universo inteiro em ~4h, com folga grande dentro da janela de
+  ~13h30 -- e sobra folga mesmo se o universo crescer (ex: BDR/ETF).
+
+`watchlist.priority_local_path` (arquivo local, fora do git — ver secao
+de dado pessoal abaixo) coloca holdings pessoais no inicio da lista
+resolvida, entao os primeiros lotes da noite sempre cobrem eles antes do
+resto do universo.
+
+Pra ver o quadro combinado mais recente de todos os tickers (nao so' o
+ultimo lote buscado), use:
 
 ```bash
-python3 scripts/monitor.py --asset-class stocks --rolling-days 7 --top 30
+python3 scripts/monitor.py --asset-class stocks --rolling-days 2 --top 30
 ```
 
 Isso le do historico (SQLite) em vez de buscar ao vivo, pegando o registro
@@ -66,7 +82,11 @@ proprios a uma watchlist alem do universo publico (indice oficial), use
 `watchlist.local_supplement_path` apontando pra um arquivo em
 `data/*.json` (ja coberto pelo `.gitignore`) no formato
 `{"tickers": [...]}` -- ele e' somado ao `tickers` do config na hora de
-buscar, sem nunca aparecer no repo publico. Ver `_resolve_watchlist_tickers()`
+buscar, sem nunca aparecer no repo publico. Se quiser garantir que
+holdings pessoais sejam sempre buscados primeiro (antes do resto do
+universo, protegendo contra corte por rate limit ou cota), use
+`watchlist.priority_local_path` no mesmo formato -- coloca esses
+tickers no inicio da lista resolvida. Ver `_resolve_watchlist_tickers()`
 em `scripts/fetch.py`.
 
 Rodar e obter JSON (para consumir em outro processo, ex: agendamento):

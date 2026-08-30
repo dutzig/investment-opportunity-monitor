@@ -19,12 +19,23 @@ import math
 import os
 import statistics
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from net_client import fetch_json, fetch_text
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _load_local_tickers(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+    return data.get("tickers", [])
 
 
 def _resolve_watchlist_tickers(watchlist: dict) -> list[str]:
@@ -35,17 +46,28 @@ def _resolve_watchlist_tickers(watchlist: dict) -> list[str]:
     proprios tickers de interesse (ex: papeis da holdings pessoais que
     nao caem em nenhum indice oficial) sem que isso vaze pro repo
     publico. Nunca comitar dado pessoal (composicao de carteira, valores,
-    nomes) em config/*.json -- isso sempre fica no arquivo local."""
+    nomes) em config/*.json -- isso sempre fica no arquivo local.
+
+    Se 'priority_local_path' tambem estiver configurado (outro arquivo
+    local, fora do git), os tickers listados la' vao pro INICIO da lista
+    resultante -- garante que holdings pessoais sao sempre buscados
+    primeiro, antes do resto do universo, entao mesmo se a fonte cortar
+    no meio (cota estourada, rate limit) os ativos que a pessoa realmente
+    tem ja foram atualizados."""
     tickers = list(watchlist.get("tickers", []))
     supplement_path = watchlist.get("local_supplement_path")
     if supplement_path:
-        full_path = SKILL_ROOT / supplement_path
-        if full_path.exists():
-            with open(full_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            for t in data.get("tickers", []):
-                if t not in tickers:
-                    tickers.append(t)
+        for t in _load_local_tickers(SKILL_ROOT / supplement_path):
+            if t not in tickers:
+                tickers.append(t)
+
+    priority_path = watchlist.get("priority_local_path")
+    if priority_path:
+        priority_set = _load_local_tickers(SKILL_ROOT / priority_path)
+        priority = [t for t in priority_set if t in tickers]
+        rest = [t for t in tickers if t not in priority]
+        tickers = priority + rest
+
     return tickers
 
 
@@ -150,20 +172,65 @@ def _daily_returns(closes: list):
     return returns
 
 
-def _select_today_batch(tickers: list[str], rotation: dict) -> list[str]:
-    """Divide a watchlist em N fatias e devolve so a fatia do dia da semana
-    atual. Existe pra cobrir watchlists grandes demais pra rodar inteiras
-    todo dia (rate limit + tempo de execucao) -- rodando 1x/dia, cada
-    ticker acaba atualizado 1x a cada N dias. Pra ver o quadro combinando
-    todos os dias da semana (nao so a fatia de hoje), monitor.py tem a
-    flag --rolling-days, que le do historico em vez de buscar ao vivo."""
-    if not rotation or not rotation.get("enabled"):
+def _parse_hhmm_utc(value: str) -> int:
+    """'22:00' -> 1320 (minutos desde meia-noite UTC)."""
+    h, m = value.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _within_overnight_window(window: dict) -> bool:
+    """Confere se o horario atual (UTC) esta dentro da janela configurada.
+    A janela existe pra nunca buscar preco/volatilidade com o pregao
+    aberto (candle do dia ainda incompleto) -- so' depois do fechamento
+    da B3 ate antes da abertura seguinte. Lida com janela que cruza a
+    meia-noite UTC (ex: 22:00 as 11:30) naturalmente."""
+    if not window or not window.get("enabled"):
+        return True
+    start = _parse_hhmm_utc(window.get("start_utc", "22:00"))
+    end = _parse_hhmm_utc(window.get("end_utc", "11:30"))
+    now = datetime.now(timezone.utc)
+    now_minutes = now.hour * 60 + now.minute
+    if start <= end:
+        return start <= now_minutes < end
+    return now_minutes >= start or now_minutes < end
+
+
+def _select_cursor_batch(tickers: list[str], batch_config: dict, state_path: Path) -> list[str]:
+    """Pega o proximo pedaco da watchlist a partir de um cursor persistido
+    em disco, avancando a cada chamada e dando a volta quando chega no
+    fim -- substitui a rotacao por dia da semana. Como a lista ja vem com
+    as prioridades (holdings pessoais) na frente (ver
+    _resolve_watchlist_tickers), rodando repetidamente dentro da janela
+    overnight, os primeiros lotes da noite sempre cobrem holdings
+    pessoais primeiro, e o resto do universo completa ao longo da noite
+    -- ver watchlist.batch e watchlist.overnight_window no config."""
+    if not batch_config or not batch_config.get("enabled") or not tickers:
         return tickers
-    days_in_cycle = rotation.get("days_in_cycle", 7)
-    weekday = date.today().weekday()  # 0=segunda ... 6=domingo
-    batch_size = math.ceil(len(tickers) / days_in_cycle)
-    start = (weekday % days_in_cycle) * batch_size
-    return tickers[start : start + batch_size]
+
+    size = batch_config.get("size", 20)
+    state = {}
+    if state_path.exists():
+        try:
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            state = {}
+
+    start = state.get("next_index", 0) % len(tickers)
+    batch = tickers[start : start + size]
+    if len(batch) < size:
+        batch += tickers[: size - len(batch)]
+    next_index = (start + size) % len(tickers)
+
+    try:
+        state_path.parent.mkdir(parents=True, exist_ok=True)
+        state_path.write_text(
+            json.dumps({"next_index": next_index, "updated_at": datetime.now(timezone.utc).isoformat()}),
+            encoding="utf-8",
+        )
+    except OSError:
+        pass
+
+    return batch
 
 
 def _fetch_bolsai_fundamentals_one(ticker_plain: str, endpoint_template: str, api_key: str, cache_ttl: int):
@@ -190,7 +257,12 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
             "watchlist.tickers esta vazio em config/stocks.json -- preencha com os "
             "tickers B3 que quer monitorar (ex: 'PETR4.SA') antes de rodar."
         )
-    tickers = _select_today_batch(all_tickers, watchlist.get("rotation", {}))
+
+    if not _within_overnight_window(watchlist.get("overnight_window", {})):
+        return []
+
+    state_path = SKILL_ROOT / watchlist.get("batch", {}).get("state_path", "data/stocks_batch_cursor.json")
+    tickers = _select_cursor_batch(all_tickers, watchlist.get("batch", {}), state_path)
     benchmark_ticker = watchlist.get("benchmark_ticker", "^BVSP")
     history_range = watchlist.get("history_range", "3mo")
     request_interval = watchlist.get("request_interval_seconds", 1.5)

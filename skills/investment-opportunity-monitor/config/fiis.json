@@ -28,8 +28,9 @@
       "XPSF11"
     ],
     "local_supplement_path": "data/fiis_watchlist_local.json",
+    "priority_local_path": "data/fiis_priority_local.json",
     "request_interval_seconds": 0.5,
-    "notes": "Composicao oficial do indice IFIX da B3 (106 FIIs), obtida direto da API publica da B3 (sistemaswebb3-listados.b3.com.br/indexProxy/indexCall/GetPortfolioDay, mesmo endpoint usado pra Ibovespa/SMLL em acoes) em 31/08/2026. Dado 100% publico, sem vinculo com nenhuma holdings pessoais ou relatorio de assinatura -- e' o indice oficial de fundos imobiliarios da bolsa. 'local_supplement_path' continua disponivel (ver _resolve_watchlist_tickers() em fetch.py) caso um dia se queira somar tickers proprios via data/fiis_watchlist_local.json (fora do git, nunca vai pro repo publico), mas por padrao nao ha arquivo la' e o IFIX inteiro ja e' suficiente."
+    "notes": "Composicao oficial do indice IFIX da B3 (106 FIIs), obtida direto da API publica da B3 (sistemaswebb3-listados.b3.com.br/indexProxy/indexCall/GetPortfolioDay, mesmo endpoint usado pra Ibovespa/SMLL em acoes) em 31/08/2026. Dado 100% publico, sem vinculo com nenhuma holdings pessoais ou relatorio de assinatura -- e' o indice oficial de fundos imobiliarios da bolsa. 'local_supplement_path' continua disponivel (ver _resolve_watchlist_tickers() em fetch.py) caso um dia se queira somar tickers proprios via data/fiis_watchlist_local.json (fora do git, nunca vai pro repo publico), mas por padrao nao ha arquivo la' e o IFIX inteiro ja e' suficiente. 'priority_local_path' (data/fiis_priority_local.json, tambem fora do git) coloca holdings pessoais no inicio da lista de busca -- garante que eles sao atualizados primeiro mesmo se a cota da bolsai acabar no meio do lote de 106."
   },
   "record_fields": {
     "id_field": "ticker",

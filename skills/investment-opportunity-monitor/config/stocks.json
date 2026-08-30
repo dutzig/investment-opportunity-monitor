@@ -43,11 +43,20 @@
       "VLID3.SA", "VTRU3.SA", "VULC3.SA", "WEGE3.SA", "YDUQ3.SA"
     ],
     "local_supplement_path": "data/stocks_watchlist_local.json",
-    "watchlist_notes": "Uniao real de dois indices oficiais da B3 (API GetPortfolioDay, sem key): Ibovespa (IBOV, 77 ativos) + Small Caps (SMLL, 107 ativos), com 35 ativos em comum entre os dois = 149 unicos. Puxado e validado em 2026-08-29. Esta e' a lista publica -- fica so' com os dois indices oficiais, sem qualquer papel especifico. Se quiser adicionar tickers proprios que nao entram em nenhum indice, use 'local_supplement_path' (arquivo em data/*.json, formato {\"tickers\": [...]}, coberto pelo .gitignore, nunca vai pro repo publico) -- ver _resolve_watchlist_tickers() em fetch.py.",
-    "rotation": {
+    "priority_local_path": "data/stocks_priority_local.json",
+    "watchlist_notes": "Uniao real de dois indices oficiais da B3 (API GetPortfolioDay, sem key): Ibovespa (IBOV, 77 ativos) + Small Caps (SMLL, 107 ativos), com 35 ativos em comum entre os dois = 149 unicos. Puxado e validado em 2026-08-29. Esta e' a lista publica -- fica so' com os dois indices oficiais, sem qualquer papel especifico. Se quiser adicionar tickers proprios que nao entram em nenhum indice, use 'local_supplement_path'; se quiser garantir que certos tickers sejam sempre buscados primeiro (ex: holdings pessoais), use 'priority_local_path' -- os dois apontam pra arquivo em data/*.json (formato {\"tickers\": [...]}), coberto pelo .gitignore, nunca vai pro repo publico. Ver _resolve_watchlist_tickers() em fetch.py.",
+    "overnight_window": {
       "enabled": true,
-      "days_in_cycle": 7,
-      "notes": "149 tickers e' demais pra rodar todo dia (rate limit da Yahoo + ~5min de execucao). O adapter divide a lista em 7 fatias (~22 tickers cada) e busca só a fatia do dia da semana atual (Python weekday(): 0=segunda...6=domingo). Rodando 1x/dia (ja configurado no systemd), cada ticker e' atualizado 1x por semana -- domingo a noite fecha o ciclo com os 149 atualizados nos ultimos 7 dias. Pra ver o quadro completo mais recente (misturando dias diferentes), use monitor.py --rolling-days 7 em vez do snapshot do dia."
+      "start_utc": "22:00",
+      "end_utc": "11:30",
+      "notes": "B3 fecha ~17h BRT (com after-market ate ~17h30) e abre ~10h BRT. Em UTC (BRT = UTC-3, sem horario de verao), isso e' 22:00 as 11:30 UTC -- so' busca fora do pregao, pra sempre pegar o candle de fechamento definitivo em vez de preco no meio do dia. Fora dessa janela, o adapter devolve lista vazia (nao e' erro) e o monitor.py nao grava snapshot."
+    },
+    "batch": {
+      "enabled": true,
+      "size": 20,
+      "interval_minutes": 30,
+      "state_path": "data/stocks_batch_cursor.json",
+      "notes": "Cursor persistido em disco (nao mais rotacao por dia da semana): cada execucao pega os proximos 20 tickers a partir de onde parou e da' a volta quando chega no fim. Rodando a cada 30min dentro da janela overnight (~13h30 de folga), cobre o universo inteiro (151 tickers hoje) em ~4h, com folga grande mesmo se a watchlist crescer (ex: BDR/ETF). 30min entre lotes e' deliberadamente conservador: o problema do Yahoo e' sensibilidade a rajada (nao documentado), nao um limite diario como a bolsai -- como sobra tempo de sobra na janela, nao ha motivo pra arriscar indo mais rapido. Como a lista ja vem com prioridade (holdings pessoais primeiro, ver priority_local_path), os primeiros lotes da noite sempre cobrem eles antes do resto do universo."
     },
     "benchmark_ticker": "^BVSP",
     "history_range": "6mo",
