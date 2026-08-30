@@ -153,3 +153,31 @@ def load_history(config: dict, record_id: str, limit: int = 30) -> list[dict]:
         return [dict(row) for row in cur.fetchall()]
     finally:
         conn.close()
+
+
+def load_latest_record(config: dict, record_id: str) -> dict | None:
+    """Devolve o record_json completo (dict) do snapshot mais recente de
+    um record_id especifico, ou None se nunca foi salvo. Usado pra
+    reaproveitar campos que nao mudam toda hora (ex: fundamentos
+    trimestrais) sem precisar buscar de novo na fonte -- ver
+    earnings_calendar.py e o bloco de fundamentos em fetch.py."""
+    history_config = config["history"]
+    table = history_config["table"]
+    db_path = _resolve_db_path(history_config)
+    if not db_path.exists():
+        return None
+
+    conn = sqlite3.connect(db_path)
+    try:
+        _ensure_table(conn, table)
+        cur = conn.execute(
+            f"SELECT record_json FROM {table} WHERE record_id = ? "
+            f"ORDER BY snapshot_ts DESC LIMIT 1",
+            (record_id,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return json.loads(row[0])
+    finally:
+        conn.close()

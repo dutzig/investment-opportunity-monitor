@@ -46,6 +46,37 @@ de dado pessoal abaixo) coloca holdings pessoais no inicio da lista
 resolvida, entao os primeiros lotes da noite sempre cobrem eles antes do
 resto do universo.
 
+### Fundamentos so' buscados quando o resultado muda de verdade
+
+Preco muda todo dia, fundamento (P/L, ROE, divida/EBITDA) so' muda
+quando sai um resultado trimestral novo -- nao faz sentido pedir o
+mesmo dado pra bolsai toda vez que o lote overnight passa por um
+ticker. `scripts/earnings_calendar.py` baixa dois datasets publicos e
+gratuitos da CVM (Portal Dados Abertos, sem cadastro, atualizados
+semanalmente pela propria CVM) e cruza:
+
+- FCA (`fca_cia_aberta_valor_mobiliario`): CNPJ -> codigo de negociacao
+  (ticker) na B3.
+- ITR (`itr_cia_aberta`): CNPJ -> data real (`DT_RECEB`) que a empresa
+  protocolou o ultimo resultado trimestral.
+
+O resultado (`ticker -> data do ultimo resultado`) fica cacheado em
+`data/earnings_calendar.json` (rebuild a cada ~20h, os dados da CVM so'
+atualizam 1x/semana mesmo). Em `fetch_yahoo_finance_chart()`, antes de
+chamar a bolsai pra um ticker, compara essa data com
+`data/fundamentals_fetch_state.json` (quando foi buscado da ultima
+vez): so' chama a API se o resultado mudou desde entao. Caso contrario,
+reaproveita os ultimos fundamentos salvos no historico
+(`storage.load_latest_record()`) -- o registro de hoje continua
+completo, so' que sem gastar cota bolsai a toa.
+
+Cobertura tem lacunas reais (nem toda empresa tem
+`Codigo_Negociacao` preenchido certo no cadastro da CVM -- ex: BPAC11
+aparece como "000000"). Pra qualquer ticker fora do calendario, o
+comportamento e' sempre buscar (nunca assume "nao precisa" sem saber
+de verdade). So' cobre resultado trimestral (ITR) -- nao cobre
+resultado anual/DFP.
+
 Pra ver o quadro combinado mais recente de todos os tickers (nao so' o
 ultimo lote buscado), use:
 

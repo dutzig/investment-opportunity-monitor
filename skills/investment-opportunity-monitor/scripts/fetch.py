@@ -23,8 +23,16 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 
 from net_client import fetch_json, fetch_text
+import earnings_calendar
+import storage
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
+FUNDAMENTALS_STATE_PATH = SKILL_ROOT / "data" / "fundamentals_fetch_state.json"
+FUNDAMENTALS_FIELDS = (
+    "pl", "pvp", "roe", "roa", "roic", "debt_equity", "net_debt_ebitda",
+    "net_margin", "ebitda_margin", "cagr_revenue_5y", "cagr_earnings_5y",
+    "market_cap",
+)
 
 
 def _load_local_tickers(path: Path) -> list[str]:
@@ -247,6 +255,35 @@ def _fetch_bolsai_fundamentals_one(ticker_plain: str, endpoint_template: str, ap
     return data, None
 
 
+def _load_fundamentals_state() -> dict:
+    if not FUNDAMENTALS_STATE_PATH.exists():
+        return {}
+    try:
+        return json.loads(FUNDAMENTALS_STATE_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_fundamentals_state(state: dict) -> None:
+    try:
+        FUNDAMENTALS_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        FUNDAMENTALS_STATE_PATH.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _load_earnings_calendar_safe() -> dict:
+    """Nunca deixa a build do calendario (download real da CVM) derrubar
+    a busca inteira -- se falhar (fora do ar, formato mudou), devolve
+    calendario vazio e o chamador trata como 'sempre buscar', que e' o
+    comportamento seguro por padrao (nunca assume 'nao precisa' sem
+    saber de verdade)."""
+    try:
+        return earnings_calendar.build_calendar()
+    except Exception:
+        return {}
+
+
 def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
     source = config["source"]
     endpoint_template = source["endpoint"]
@@ -269,6 +306,8 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
 
     fundamentals_source = config.get("fundamentals_source")
     fundamentals_api_key = None
+    earnings_cal = {}
+    fundamentals_state = {}
     if fundamentals_source:
         env_var = fundamentals_source.get("api_key_env_var", "BOLSAI_API_KEY")
         fundamentals_api_key = os.environ.get(env_var)
@@ -278,6 +317,8 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
                 f"nao esta definida. Pegue uma chave gratuita em usebolsai.com e exporte "
                 f"antes de rodar: export {env_var}=sua_chave_aqui"
             )
+        earnings_cal = _load_earnings_calendar_safe()
+        fundamentals_state = _load_fundamentals_state()
 
     def fetch_chart(ticker: str):
         url = endpoint_template.format(ticker=ticker) + f"?range={history_range}&interval=1d"
@@ -354,24 +395,59 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
         }
 
         if fundamentals_source:
-            if i > 0 and request_interval:
-                time.sleep(request_interval)
             ticker_plain = ticker.split(".")[0]  # bolsai usa 'PETR4', nao 'PETR4.SA'
-            fdata, ferror = _fetch_bolsai_fundamentals_one(
-                ticker_plain, fundamentals_source["endpoint"], fundamentals_api_key, cache_ttl
-            )
-            if fdata:
-                for key in (
-                    "pl", "pvp", "roe", "roa", "roic", "debt_equity", "net_debt_ebitda",
-                    "net_margin", "ebitda_margin", "cagr_revenue_5y", "cagr_earnings_5y",
-                    "market_cap",
-                ):
-                    if key in fdata:
-                        record[key] = fdata[key]
+            calendar_date = earnings_calendar.last_report_date(earnings_cal, ticker_plain)
+            fetched_at_date = fundamentals_state.get(ticker, {}).get("report_date")
+            # Sem calendario pra esse ticker (lacuna real da fonte, ex:
+            # units com codigo "000000" no cadastro da CVM): sempre busca,
+            # nunca assume "nao precisa" sem saber de verdade.
+            is_due = calendar_date is None or fetched_at_date is None or calendar_date > fetched_at_date
+
+            if is_due:
+                if i > 0 and request_interval:
+                    time.sleep(request_interval)
+                fdata, ferror = _fetch_bolsai_fundamentals_one(
+                    ticker_plain, fundamentals_source["endpoint"], fundamentals_api_key, cache_ttl
+                )
+                if fdata:
+                    for key in FUNDAMENTALS_FIELDS:
+                        if key in fdata:
+                            record[key] = fdata[key]
+                    record["_fundamentals_fetched_at"] = datetime.now(timezone.utc).isoformat()
+                    if calendar_date:
+                        fundamentals_state[ticker] = {"report_date": calendar_date}
+                else:
+                    record["_fundamentals_error"] = ferror
             else:
-                record["_fundamentals_error"] = ferror
+                cached = storage.load_latest_record(config, ticker)
+                if cached:
+                    for key in FUNDAMENTALS_FIELDS:
+                        if key in cached and cached[key] is not None:
+                            record[key] = cached[key]
+                    record["_fundamentals_cached_from_report"] = calendar_date
+                else:
+                    # Nunca tivemos fundamento salvo pra esse ticker ainda,
+                    # mesmo com resultado "velho" no calendario -- busca
+                    # mesmo assim, so' essa vez.
+                    if i > 0 and request_interval:
+                        time.sleep(request_interval)
+                    fdata, ferror = _fetch_bolsai_fundamentals_one(
+                        ticker_plain, fundamentals_source["endpoint"], fundamentals_api_key, cache_ttl
+                    )
+                    if fdata:
+                        for key in FUNDAMENTALS_FIELDS:
+                            if key in fdata:
+                                record[key] = fdata[key]
+                        record["_fundamentals_fetched_at"] = datetime.now(timezone.utc).isoformat()
+                        if calendar_date:
+                            fundamentals_state[ticker] = {"report_date": calendar_date}
+                    else:
+                        record["_fundamentals_error"] = ferror
 
         records.append(record)
+
+    if fundamentals_source:
+        _save_fundamentals_state(fundamentals_state)
 
     return records
 
