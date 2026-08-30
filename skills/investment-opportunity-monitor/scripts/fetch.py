@@ -28,23 +28,25 @@ SKILL_ROOT = Path(__file__).resolve().parent.parent
 
 
 def _resolve_watchlist_tickers(watchlist: dict) -> list[str]:
-    """Le a lista real de tickers de um arquivo local fora do git, se
-    'local_override_path' estiver configurado e o arquivo existir --
-    permite manter uma watchlist curada de terceiros (ex: relatorio pago
-    e licenciado) ou a composicao real da carteira do usuario fora do
-    repo publico. O config versionado no git sempre traz so uma lista
-    generica de exemplo em 'tickers'; a lista de verdade fica em
-    data/*.json (dir ja coberto pelo .gitignore)."""
-    override_path = watchlist.get("local_override_path")
-    if override_path:
-        full_path = SKILL_ROOT / override_path
+    """Uniao entre a watchlist publica do config ('tickers', sempre dado
+    generico/oficial, versionado no git) e um suplemento local opcional
+    ('local_supplement_path') -- arquivo fora do repo (dir data/*.json,
+    ja coberto pelo .gitignore) que cada pessoa usa pra adicionar seus
+    proprios tickers de interesse (ex: papeis da holdings pessoais que
+    nao caem em nenhum indice oficial) sem que isso vaze pro repo
+    publico. Nunca comitar dado pessoal (composicao de carteira, valores,
+    nomes) em config/*.json -- isso sempre fica no arquivo local."""
+    tickers = list(watchlist.get("tickers", []))
+    supplement_path = watchlist.get("local_supplement_path")
+    if supplement_path:
+        full_path = SKILL_ROOT / supplement_path
         if full_path.exists():
             with open(full_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            tickers = data.get("tickers")
-            if tickers:
-                return tickers
-    return watchlist.get("tickers", [])
+            for t in data.get("tickers", []):
+                if t not in tickers:
+                    tickers.append(t)
+    return tickers
 
 
 def fetch_defillama_yields(config: dict, cache_ttl: int) -> list[dict]:
@@ -182,7 +184,7 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
     source = config["source"]
     endpoint_template = source["endpoint"]
     watchlist = config.get("watchlist", {})
-    all_tickers = watchlist.get("tickers", [])
+    all_tickers = _resolve_watchlist_tickers(watchlist)
     if not all_tickers:
         raise RuntimeError(
             "watchlist.tickers esta vazio em config/stocks.json -- preencha com os "

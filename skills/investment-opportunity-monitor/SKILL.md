@@ -47,9 +47,10 @@ Rodar uma classe completa:
 python3 scripts/monitor.py --asset-class defi --top 15
 ```
 
-Classes que exigem API key (hoje so' `fiis`) precisam da variavel de
-ambiente definida antes de rodar -- nunca coloque a chave dentro de um
-config (os configs vao pro git, que e' publico):
+Classes que exigem API key (`fiis`, e `stocks` pelos fundamentos via
+`fundamentals_source`) precisam da variavel de ambiente definida antes
+de rodar -- nunca coloque a chave dentro de um config (os configs vao
+pro git, que e' publico):
 
 ```bash
 export BOLSAI_API_KEY="sua_chave_aqui"
@@ -58,6 +59,15 @@ python3 scripts/monitor.py --asset-class fiis --top 12
 
 Na VPS, defina isso no `Environment=` do arquivo `.service` do systemd
 (nunca commitado), nao num `.env` dentro do repo.
+
+**Dado pessoal (composicao de carteira, valores, listas de terceiros
+pagas) nunca vai pro config versionado.** Se quiser somar tickers
+proprios a uma watchlist alem do universo publico (indice oficial), use
+`watchlist.local_supplement_path` apontando pra um arquivo em
+`data/*.json` (ja coberto pelo `.gitignore`) no formato
+`{"tickers": [...]}` -- ele e' somado ao `tickers` do config na hora de
+buscar, sem nunca aparecer no repo publico. Ver `_resolve_watchlist_tickers()`
+em `scripts/fetch.py`.
 
 Rodar e obter JSON (para consumir em outro processo, ex: agendamento):
 
