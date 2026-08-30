@@ -2,9 +2,6 @@
   "name": "investment-opportunity-monitor",
   "version": "0.1.0",
   "description": "Somente-leitura: monitora oportunidades de investimento (DeFi, ações/ETFs, renda fixa) via APIs públicas e calcula scores de risco transparentes e configuráveis. Nunca executa ordens, nunca toca em chaves/wallets, nunca dá recomendação personalizada.",
-  "author": {
-    "name": "maintainer"
-  },
   "skills": [
     "./skills/investment-opportunity-monitor"
   ]
