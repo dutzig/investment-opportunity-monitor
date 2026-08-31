@@ -20,12 +20,17 @@ import os
 import statistics
 import time
 import urllib.parse
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from net_client import fetch_json, fetch_text, get_rate_limit_status
 import earnings_calendar
 import storage
+
+try:
+    import swing_local  # arquivo pessoal, fora do git -- ver scripts/swing_local.py
+except ImportError:
+    swing_local = None
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
 FUNDAMENTALS_STATE_PATH = SKILL_ROOT / "data" / "fundamentals_fetch_state.json"
@@ -188,20 +193,42 @@ def _parse_hhmm_utc(value: str) -> int:
 
 
 def _within_overnight_window(window: dict) -> bool:
-    """Confere se o horario atual (UTC) esta dentro da janela configurada.
-    A janela existe pra nunca buscar preco/volatilidade com o pregao
-    aberto (candle do dia ainda incompleto) -- so' depois do fechamento
-    da B3 ate antes da abertura seguinte. Lida com janela que cruza a
-    meia-noite UTC (ex: 22:00 as 11:30) naturalmente."""
+    """Confere se o horario atual (UTC) esta dentro da janela configurada
+    E se o pregao que essa janela reflete foi um dia util (B3 nao opera
+    fim de semana -- sem isso, a janela ficava rodando a noite toda de
+    sabado e domingo buscando o MESMO fechamento de sexta de novo e de
+    novo, sem nenhum dado novo possivel).
+
+    A janela cruza meia-noite UTC (ex: 22:00 as 11:30) -- entao tem duas
+    partes, cada uma reflete um pregao diferente:
+    - parte da noite (hora >= start, ex: 22h-23h59): reflete o pregao de
+      HOJE (acabou de fechar).
+    - parte da madrugada (hora < end, ex: 00h-11h30): reflete o pregao
+      de ONTEM (a mesma janela que comecou na noite anterior).
+    So' roda se esse pregao referenciado caiu numa segunda-sexta."""
     if not window or not window.get("enabled"):
         return True
     start = _parse_hhmm_utc(window.get("start_utc", "22:00"))
     end = _parse_hhmm_utc(window.get("end_utc", "11:30"))
     now = datetime.now(timezone.utc)
     now_minutes = now.hour * 60 + now.minute
+
     if start <= end:
-        return start <= now_minutes < end
-    return now_minutes >= start or now_minutes < end
+        in_window = start <= now_minutes < end
+    else:
+        in_window = now_minutes >= start or now_minutes < end
+    if not in_window:
+        return False
+
+    if window.get("skip_weekends", True):
+        if now_minutes >= start:
+            referenced_day = now.weekday()  # parte da noite -> pregao de hoje
+        else:
+            referenced_day = (now - timedelta(days=1)).weekday()  # madrugada -> pregao de ontem
+        if referenced_day >= 5:  # 5=sabado, 6=domingo
+            return False
+
+    return True
 
 
 def _select_cursor_batch(tickers: list[str], batch_config: dict, state_path: Path) -> list[str]:
@@ -385,6 +412,21 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
         quote = chart.get("indicators", {}).get("quote", [{}])[0]
         closes = quote.get("close", [])
         volumes = quote.get("volume", [])
+        highs = quote.get("high", [])
+        lows = quote.get("low", [])
+        # O Yahoo devolve close=None pro candle mais recente quando ele
+        # ainda esta incompleto, mas high/low vem 0.0 (nao None) nesse
+        # mesmo candle -- sem isso, 0.0 entra no calculo de estocastico/
+        # padrao como se fosse uma minima real, corrompendo tudo. Anula
+        # high/low/volume onde o close correspondente e' None.
+        highs = [h if c is not None else None for h, c in zip(highs, closes)]
+        lows = [l if c is not None else None for l, c in zip(lows, closes)]
+        volumes = [v if c is not None else None for v, c in zip(volumes, closes)]
+        # Corta candle(s) incompleto(s) do final -- sem isso "o mais
+        # recente" (indice -1, usado pro stoch/padrao/dias_atras) podia
+        # ser um dia sem dado real.
+        while closes and closes[-1] is None:
+            closes, volumes, highs, lows, ts = closes[:-1], volumes[:-1], highs[:-1], lows[:-1], ts[:-1]
 
         returns = _daily_returns(closes)
         volatility_30d = None
@@ -421,6 +463,8 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
             "beta": beta,
             "avg_volume_brl": avg_volume_brl,
         }
+        if swing_local:
+            record.update(swing_local.compute(highs, lows, closes, volumes))
 
         if fundamentals_source:
             ticker_plain = ticker.split(".")[0]  # bolsai usa 'PETR4', nao 'PETR4.SA'

@@ -34,6 +34,19 @@ from score import compute_scores  # noqa: E402
 from storage import save_snapshot, load_latest_per_id  # noqa: E402
 
 
+def _extra_score_blocks(config: dict) -> list[tuple[str, dict]]:
+    """Qualquer bloco do config que tenha 'components' (a mesma forma do
+    risk_score) alem do proprio risk_score conta como um score extra
+    calculado em sequencia (ex: opportunity_score, swing_signal) --
+    generico de proposito, pra classe nenhuma precisar tocar em
+    monitor.py so' pra ganhar um score novo. Ordem = ordem no JSON."""
+    return [
+        (key, block)
+        for key, block in config.items()
+        if key != "risk_score" and isinstance(block, dict) and "components" in block
+    ]
+
+
 def _api_key_hosts(config: dict) -> list[str]:
     """Hosts que exigem chave de API nesta config (ex: bolsai), pra checar
     cota restante depois da busca. Cobre tanto 'source' quanto
@@ -49,6 +62,31 @@ def _api_key_hosts(config: dict) -> list[str]:
     return hosts
 
 
+def _apply_local_config_overlay(asset_class: str, config: dict) -> None:
+    """Mescla config/pontuacao PESSOAL (fora do git) por cima do config
+    publico -- mesmo espirito do local_supplement_path/priority_local_path
+    pra watchlist, so' que pra blocos de score inteiros e colunas extras
+    de tabela (ex: swing_signal, um sistema de trading pessoal que nao
+    faz sentido publicar). Arquivo em data/<classe>_local_config.json
+    (coberto pelo .gitignore), formato:
+    {"extra_score_blocks": {"nome": {...}}, "extra_table_columns": [...]}.
+    Se o arquivo nao existir, config publico funciona igual, sem essas
+    colunas/scores extras."""
+    overlay_path = SKILL_ROOT / "data" / f"{asset_class}_local_config.json"
+    if not overlay_path.exists():
+        return
+    try:
+        overlay = json.loads(overlay_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return
+    for key, block in overlay.get("extra_score_blocks", {}).items():
+        if block is not None:
+            config[key] = block
+    extra_columns = overlay.get("extra_table_columns")
+    if extra_columns:
+        config.setdefault("record_fields", {}).setdefault("table_columns", []).extend(extra_columns)
+
+
 def load_config(asset_class: str) -> dict:
     path = CONFIG_DIR / f"{asset_class}.json"
     if not path.exists():
@@ -58,6 +96,7 @@ def load_config(asset_class: str) -> dict:
         )
     with open(path, "r", encoding="utf-8") as f:
         config = json.load(f)
+    _apply_local_config_overlay(asset_class, config)
 
     if config.get("status") == "TEMPLATE_NAO_IMPLEMENTADO":
         raise SystemExit(
@@ -124,28 +163,28 @@ def print_table(records: list[dict], config: dict, top: int, rank_by: str) -> No
     name_field = fields.get("name_field") or fields.get("id_field")
     label_field = fields.get("protocol_field") or fields.get("type_field")
     columns = fields.get("table_columns", [])
-    has_opportunity = "opportunity_score" in config
+    extra_scores = _extra_score_blocks(config)
 
     ranked = sorted(records, key=lambda r: _rank_value(r, rank_by), reverse=True)[:top]
 
     print(f"\n{config['display_name']} — top {len(ranked)} por {rank_by} (dados reais, {config['source']['endpoint']})\n")
-    opp_header = f"{'oport.':>6}  " if has_opportunity else ""
+    extra_headers = "".join(f"{key.replace('_score', '')[:6]:>6}  " for key, _ in extra_scores)
     col_headers = "  ".join(f"{c['label']:>{c.get('width', 10)}}" for c in columns)
     label_header = f"{'categoria':<18}  " if label_field else ""
-    header = f"{'risco':>6}  {opp_header}{col_headers}  {label_header}ativo"
+    header = f"{'risco':>6}  {extra_headers}{col_headers}  {label_header}ativo"
     print(header)
     print("-" * len(header))
     for r in ranked:
         score = r["risk_score"]
         score_str = f"{score:>6.1f}" if isinstance(score, (int, float)) else f"{'N/D':>6}"
-        opp_str = ""
-        if has_opportunity:
-            opp = r.get("opportunity_score")
-            opp_str = (f"{opp:>6.1f}  " if isinstance(opp, (int, float)) else f"{'N/D':>6}  ")
+        extra_str = ""
+        for key, _ in extra_scores:
+            v = r.get(key)
+            extra_str += f"{v:>6.1f}  " if isinstance(v, (int, float)) else f"{'N/D':>6}  "
         cells = "  ".join(_format_cell(r.get(c["field"]), c) for c in columns)
         label_str = f"{str(r.get(label_field, ''))[:18]:<18}  " if label_field else ""
         name = str(r.get(name_field) or r.get(fields.get("id_field"), ""))
-        print(f"{score_str}  {opp_str}{cells}  {label_str}{name}")
+        print(f"{score_str}  {extra_str}{cells}  {label_str}{name}")
         if r.get("_fetch_error"):
             print(f"        (busca falhou: {r['_fetch_error']})")
         missing = r.get("_risk_score_missing_components") or []
@@ -200,8 +239,8 @@ def main():
             return
         filtered = apply_filters(raw_records, config.get("filters", {}))
         scored = compute_scores(filtered, config["risk_score"], output_field="risk_score")
-        if "opportunity_score" in config:
-            scored = compute_scores(scored, config["opportunity_score"], output_field="opportunity_score")
+        for key, block in _extra_score_blocks(config):
+            scored = compute_scores(scored, block, output_field=key)
 
         if not args.no_history:
             db_path = save_snapshot(scored, config)

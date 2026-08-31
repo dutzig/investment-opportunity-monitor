@@ -1,4 +1,6 @@
 skills/investment-opportunity-monitor/data/
+skills/investment-opportunity-monitor/scripts/swing_local.py
+skills/investment-opportunity-monitor/docs/swing-trade-local.md
 __pycache__/
 *.pyc
 .venv/

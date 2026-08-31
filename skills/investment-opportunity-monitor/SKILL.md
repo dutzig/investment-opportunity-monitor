@@ -19,32 +19,39 @@ Classes disponiveis hoje (todas completas e testadas contra a fonte real):
 |---|---|---|---|
 | DeFi (yield farming, lending, LPs) | `config/defi.json` | DefiLlama `/pools`, sem key | Universo completo (todas as pools ativas) |
 | Renda fixa — Tesouro Direto (BR) | `config/fixed-income.json` | CSV oficial do Tesouro Transparente, sem key | Universo completo (todos os titulos, foto do dia mais recente) |
-| Acoes B3 (BR) | `config/stocks.json` | Yahoo Finance chart API, sem key | Watchlist = uniao real de Ibovespa + Small Caps (149 tickers, via API oficial da B3), dividida em 7 fatias diarias — ver abaixo |
+| Acoes + BDR + ETF B3 (BR) | `config/stocks.json` | Yahoo Finance chart API, sem key | Watchlist = uniao de 3 indices/listagens oficiais da B3 (Ibovespa+SMLL, BDRX, todos os ETFs listados — 409 tickers), busca o universo inteiro numa passada por noite — ver abaixo |
 | Fundos Imobiliarios (FII, B3) | `config/fiis.json` | bolsai (P/VP, dividend yield, vacancia, inadimplencia) | **Exige API key gratuita** (usebolsai.com, sem cartao) — nunca no config, sempre em `BOLSAI_API_KEY`. Watchlist = indice IFIX oficial da B3 (106 fundos). |
 
 Acoes de outros mercados (ex: EUA via Alpha Vantage) nao foram implementadas — o foco atual e' pt-BR / B3.
 
-### Janela overnight + lotes da watchlist de acoes
+### Janela overnight da watchlist de acoes/BDR/ETF
 
-O universo inteiro (151 tickers hoje) e' grande demais pra buscar de uma
-vez sem arriscar rate limit do Yahoo (sensibilidade a rajada, nao um
-limite diario documentado). Duas configs em `config/stocks.json`
-resolvem isso juntas:
-
-- `watchlist.overnight_window`: so' busca fora do pregao da B3 (22:00 as
-  11:30 UTC = ~19h as ~08h30 BRT), pra sempre pegar o candle de
-  fechamento definitivo em vez de preco no meio do dia. Fora da janela,
-  o adapter devolve lista vazia (nao e' erro) e nao grava snapshot.
-- `watchlist.batch`: dentro da janela, um cursor persistido em disco
-  (`data/stocks_batch_cursor.json`) avança 20 tickers por execucao e da'
-  a volta quando chega no fim. Rodando a cada 30min (timer do systemd),
-  cobre o universo inteiro em ~4h, com folga grande dentro da janela de
-  ~13h30 -- e sobra folga mesmo se o universo crescer (ex: BDR/ETF).
+`config/stocks.json` so' busca fora do pregao da B3
+(`watchlist.overnight_window`: 22:00 as 11:30 UTC = ~19h as ~08h30
+BRT), pra sempre pegar o candle de fechamento definitivo em vez de
+preco no meio do dia -- fora da janela, o adapter devolve lista vazia
+(nao e' erro) e nao grava snapshot. `skip_weekends` (default true) faz
+o mesmo pulando sabado/domingo, ja que a B3 nao opera e o dado nao
+muda. Dentro da janela, a busca do universo inteiro (409 tickers) roda
+numa passada so, so' com `request_interval_seconds` (2s) espacando
+cada chamada -- ~14min no total, contra ~13h30 de janela disponivel.
+`watchlist.batch` existe no codigo (cursor persistido em disco) mas
+fica desativado por padrao -- era uma cautela desnecessaria (lote de 20
+a cada 30min, ~4h so' pra 149 tickers) que so' fazia sentido antes de
+medir o tempo real de uma busca continua; reative se o universo crescer
+o bastante pra nao caber mais numa passada so.
 
 `watchlist.priority_local_path` (arquivo local, fora do git — ver secao
 de dado pessoal abaixo) coloca holdings pessoais no inicio da lista
-resolvida, entao os primeiros lotes da noite sempre cobrem eles antes do
-resto do universo.
+resolvida, entao mesmo se a fonte cortar no meio (rate limit) os
+ativos que a pessoa realmente tem ja foram atualizados primeiro.
+
+Nota real de dado: o Yahoo devolve `close=None` mas `high`/`low=0.0`
+(nao None) no candle mais recente quando ele ainda esta incompleto --
+sem tratar isso, o 0.0 corrompe qualquer indicador tecnico como se
+fosse uma minima real; `fetch_yahoo_finance_chart()` anula
+high/low/volume onde o close correspondente e' None antes de calcular
+qualquer coisa em cima do historico.
 
 ### Fundamentos so' buscados quando o resultado muda de verdade
 
@@ -119,6 +126,24 @@ universo, protegendo contra corte por rate limit ou cota), use
 `watchlist.priority_local_path` no mesmo formato -- coloca esses
 tickers no inicio da lista resolvida. Ver `_resolve_watchlist_tickers()`
 em `scripts/fetch.py`.
+
+O mesmo vale pra **estrategias de trading pessoais** (nao so' dado de
+carteira) -- um sistema de timing/sinal proprio nao e' um indicador
+tecnico generico, e' pessoal, e nunca vai pro repo publico. Dois
+mecanismos cobrem isso, ambos fora do `.gitignore`:
+
+- **Codigo**: `scripts/fetch.py` importa `scripts/swing_local.py` de
+  forma opcional (`try/except ImportError`) -- se o arquivo nao existir
+  (ex: alguem clonando o repo do zero), o monitor funciona igual, so'
+  sem os campos extras. Qualquer calculo proprio de timing/sinal deve
+  morar nesse tipo de modulo local, nunca em `fetch.py` direto.
+- **Config/score**: `monitor.py` (`_apply_local_config_overlay`) le'
+  `data/<classe>_local_config.json` (se existir) e mescla por cima do
+  config publico -- formato `{"extra_score_blocks": {"nome": {...}},
+  "extra_table_columns": [...]}`. E' assim que `swing_signal` (score de
+  timing) e as colunas de tabela do padrao 1-2-3/armadilha existem hoje
+  pra quem roda a skill localmente, sem aparecer em `config/stocks.json`
+  no git.
 
 Rodar e obter JSON (para consumir em outro processo, ex: agendamento):
 
