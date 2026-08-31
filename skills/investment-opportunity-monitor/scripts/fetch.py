@@ -19,10 +19,11 @@ import math
 import os
 import statistics
 import time
+import urllib.parse
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-from net_client import fetch_json, fetch_text
+from net_client import fetch_json, fetch_text, get_rate_limit_status
 import earnings_calendar
 import storage
 
@@ -272,6 +273,29 @@ def _save_fundamentals_state(state: dict) -> None:
         pass
 
 
+def _bolsai_quota_likely_exhausted(host: str, staleness_hours: float = 2.0) -> bool:
+    """Confere a ultima leitura conhecida de X-RateLimit-Remaining (ver
+    net_client.py) antes de tentar qualquer chamada -- se a ultima vez
+    que vimos a bolsai ela tinha 0 restantes E essa leitura e' recente
+    (dentro de staleness_hours), nem tenta: sem isso, cada lote insistia
+    de novo do zero (4 tentativas com backoff POR ticker) mesmo sabendo
+    de antemao que ia falhar, so' pra redescobrir o que ja sabiamos.
+    Se a leitura for antiga (cota pode ter resetado), deixa passar pra
+    fazer uma tentativa real de novo -- e' assim que o sistema volta a
+    funcionar sozinho sem precisar saber a hora exata do reset."""
+    status = get_rate_limit_status(host)
+    if not status:
+        return False
+    try:
+        remaining = int(status.get("remaining", "1"))
+    except (TypeError, ValueError):
+        return False
+    if remaining > 0:
+        return False
+    age_hours = (time.time() - status.get("checked_at", 0)) / 3600
+    return age_hours < staleness_hours
+
+
 def _load_earnings_calendar_safe() -> dict:
     """Nunca deixa a build do calendario (download real da CVM) derrubar
     a busca inteira -- se falhar (fora do ar, formato mudou), devolve
@@ -308,6 +332,8 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
     fundamentals_api_key = None
     earnings_cal = {}
     fundamentals_state = {}
+    fundamentals_host = None
+    quota_exhausted = False
     if fundamentals_source:
         env_var = fundamentals_source.get("api_key_env_var", "BOLSAI_API_KEY")
         fundamentals_api_key = os.environ.get(env_var)
@@ -319,6 +345,8 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
             )
         earnings_cal = _load_earnings_calendar_safe()
         fundamentals_state = _load_fundamentals_state()
+        fundamentals_host = urllib.parse.urlparse(fundamentals_source["endpoint"]).netloc
+        quota_exhausted = _bolsai_quota_likely_exhausted(fundamentals_host)
 
     def fetch_chart(ticker: str):
         url = endpoint_template.format(ticker=ticker) + f"?range={history_range}&interval=1d"
@@ -399,11 +427,13 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
             calendar_date = earnings_calendar.last_report_date(earnings_cal, ticker_plain)
             fetched_at_date = fundamentals_state.get(ticker, {}).get("report_date")
             # Sem calendario pra esse ticker (lacuna real da fonte, ex:
-            # units com codigo "000000" no cadastro da CVM): sempre busca,
-            # nunca assume "nao precisa" sem saber de verdade.
+            # units com codigo "000000" no cadastro da CVM), ou nunca
+            # buscado ainda: sempre conta como "devido", nunca assume
+            # "nao precisa" sem saber de verdade.
             is_due = calendar_date is None or fetched_at_date is None or calendar_date > fetched_at_date
 
-            if is_due:
+            got_fresh = False
+            if is_due and not quota_exhausted:
                 if i > 0 and request_interval:
                     time.sleep(request_interval)
                 fdata, ferror = _fetch_bolsai_fundamentals_one(
@@ -416,33 +446,33 @@ def fetch_yahoo_finance_chart(config: dict, cache_ttl: int) -> list[dict]:
                     record["_fundamentals_fetched_at"] = datetime.now(timezone.utc).isoformat()
                     if calendar_date:
                         fundamentals_state[ticker] = {"report_date": calendar_date}
+                    got_fresh = True
                 else:
                     record["_fundamentals_error"] = ferror
-            else:
+                    # A chamada que acabou de falhar ja atualizou
+                    # rate_limits.json (net_client._record_rate_limit) --
+                    # confere de novo: se a cota zerou agora, para de
+                    # tentar nos proximos tickers deste mesmo lote.
+                    if fundamentals_host and _bolsai_quota_likely_exhausted(fundamentals_host):
+                        quota_exhausted = True
+
+            if not got_fresh:
+                # Nao buscou fresco (nao devido, cota esgotada, ou a
+                # tentativa falhou) -- sempre tenta cair pro ultimo
+                # fundamento salvo no historico antes de desistir.
                 cached = storage.load_latest_record(config, ticker)
                 if cached:
                     for key in FUNDAMENTALS_FIELDS:
                         if key in cached and cached[key] is not None:
                             record[key] = cached[key]
                     record["_fundamentals_cached_from_report"] = calendar_date
-                else:
-                    # Nunca tivemos fundamento salvo pra esse ticker ainda,
-                    # mesmo com resultado "velho" no calendario -- busca
-                    # mesmo assim, so' essa vez.
-                    if i > 0 and request_interval:
-                        time.sleep(request_interval)
-                    fdata, ferror = _fetch_bolsai_fundamentals_one(
-                        ticker_plain, fundamentals_source["endpoint"], fundamentals_api_key, cache_ttl
+                    record.pop("_fundamentals_error", None)
+                elif "_fundamentals_error" not in record:
+                    record["_fundamentals_error"] = (
+                        "cota da bolsai provavelmente esgotada e sem dado em cache pra reaproveitar"
+                        if quota_exhausted
+                        else "sem cobertura fundamentalista disponivel"
                     )
-                    if fdata:
-                        for key in FUNDAMENTALS_FIELDS:
-                            if key in fdata:
-                                record[key] = fdata[key]
-                        record["_fundamentals_fetched_at"] = datetime.now(timezone.utc).isoformat()
-                        if calendar_date:
-                            fundamentals_state[ticker] = {"report_date": calendar_date}
-                    else:
-                        record["_fundamentals_error"] = ferror
 
         records.append(record)
 
